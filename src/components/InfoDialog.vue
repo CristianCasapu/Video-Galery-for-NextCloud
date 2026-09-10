@@ -19,6 +19,7 @@
 						</svg>
 						{{ t('videogallery', 'Play') }}
 					</button>
+					<button class="info__link" @click="$emit('share', item)">{{ t('videogallery', 'Share') }}</button>
 					<a class="info__link" :href="filesUrl">{{ t('videogallery', 'Show in Files') }}</a>
 				</div>
 
@@ -47,7 +48,7 @@ import { posterUrl } from '../api'
 import type { VideoItem } from '../types'
 
 const props = defineProps<{ item: VideoItem }>()
-defineEmits<{ close: [], play: [item: VideoItem] }>()
+defineEmits<{ close: [], play: [item: VideoItem], share: [item: VideoItem] }>()
 
 const poster = computed(() => posterUrl(props.item.fileId))
 const filesUrl = computed(() => generateUrl('/f/{fileId}', { fileId: props.item.fileId }))
@@ -196,6 +197,13 @@ const facts = computed(() => {
 	color: #d5d9de;
 	font-size: 13px;
 	text-decoration: none;
+}
+
+.info__link {
+	border: 1px solid rgb(255 255 255 / 18%);
+	background: transparent;
+	cursor: pointer;
+	font-family: inherit;
 }
 
 .info__link:hover {

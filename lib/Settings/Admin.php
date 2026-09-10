@@ -15,6 +15,7 @@ use OCA\VideoGallery\Service\FFmpeg;
 use OCA\VideoGallery\Service\Janitor;
 use OCA\VideoGallery\Service\Paths;
 use OCA\VideoGallery\Service\PlaybackMemory;
+use OCA\VideoGallery\Service\Tuning;
 use OCP\AppFramework\Http\TemplateResponse;
 use OCP\AppFramework\Services\IInitialState;
 use OCP\Settings\ISettings;
@@ -29,6 +30,7 @@ class Admin implements ISettings {
 		private Janitor $janitor,
 		private ItemMapper $items,
 		private PlaybackMemory $memory,
+		private Tuning $tuning,
 	) {
 	}
 
@@ -42,6 +44,8 @@ class Admin implements ISettings {
 			'candidates' => $this->paths->candidates(),
 			'encoders' => FFmpeg::ENCODERS,
 			'memory' => $this->memory->summary(30),
+			'devices' => $this->tuning->devices(),
+			'benchmark' => $this->tuning->benchmark(),
 		]);
 		Util::addScript(Application::APP_ID, 'videogallery-admin');
 		return new TemplateResponse(Application::APP_ID, 'admin', [], '');

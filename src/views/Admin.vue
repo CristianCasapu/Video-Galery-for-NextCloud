@@ -40,6 +40,56 @@
 			</ul>
 		</section>
 
+		<!-- The cards, and what this machine proved it can do. -->
+		<section class="vg-card">
+			<header class="vg-card__head">
+				<h3>{{ t('videogallery', 'Graphics cards') }}</h3>
+				<button class="vg-btn" :disabled="tuning" @click="runTuner">
+					{{ tuning ? t('videogallery', 'Measuring…') : t('videogallery', 'Measure this machine') }}
+				</button>
+			</header>
+			<p class="vg-hint">
+				{{ t('videogallery', 'Work goes to whichever enabled card is carrying least, so a machine with several spreads the load instead of queueing behind one. How many conversions a card will run at once is set by its driver, and the figures below are starting points you can override.') }}
+			</p>
+
+			<table v-if="devices.length" class="vg-table">
+				<thead>
+					<tr>
+						<th>{{ t('videogallery', 'Card') }}</th>
+						<th>{{ t('videogallery', 'Use it') }}</th>
+						<th>{{ t('videogallery', 'At once') }}</th>
+						<th>{{ t('videogallery', 'Running') }}</th>
+					</tr>
+				</thead>
+				<tbody>
+					<tr v-for="device in devices" :key="device.kind + device.index">
+						<td>
+							{{ device.name }}
+							<span class="vg-dim">{{ device.memory ? ' · ' + device.memory + ' MB' : '' }}</span>
+						</td>
+						<td><input type="checkbox" :checked="device.enabled" @change="setDevice(device, 'enabled', ($event.target as HTMLInputElement).checked)"></td>
+						<td><input class="vg-tiny" type="number" min="1" max="64" :value="device.max_sessions" @change="setDevice(device, 'max_sessions', Number(($event.target as HTMLInputElement).value))"></td>
+						<td>{{ device.active }}</td>
+					</tr>
+				</tbody>
+			</table>
+			<p v-else class="vg-hint">{{ t('videogallery', 'No graphics card was found. Converting will use the processor.') }}</p>
+
+			<div v-if="benchmark?.ran_at" class="vg-bench">
+				<p class="vg-hint">{{ benchmarkLine }}</p>
+				<div class="vg-bars">
+					<div v-for="(speed, preset) in benchmark.presets" :key="preset" class="vg-bar">
+						<span class="vg-bar__name">{{ preset }}</span>
+						<span class="vg-bar__track"><span class="vg-bar__fill" :style="{ width: barWidth(speed) }" /></span>
+						<span class="vg-bar__value">{{ speed }}×</span>
+					</div>
+				</div>
+				<ul v-if="benchmark.notes?.length" class="vg-notes">
+					<li v-for="note in benchmark.notes" :key="note">{{ note }}</li>
+				</ul>
+			</div>
+		</section>
+
 		<!-- Where the working files go. -->
 		<section class="vg-card">
 			<h3>{{ t('videogallery', 'Working files') }}</h3>
@@ -220,6 +270,62 @@
 			</div>
 		</section>
 
+		<!-- Watching in order. -->
+		<section class="vg-card">
+			<h3>{{ t('videogallery', 'Watching in order') }}</h3>
+			<p class="vg-hint">
+				{{ t('videogallery', 'A course or a lecture series is dozens of numbered files in one folder, each carrying on where the last stopped. Where a folder looks like that, the next part is offered when one finishes rather than leaving you to go and find it.') }}
+			</p>
+			<label class="vg-toggle">
+				<input v-model="settings.autoplay_next" type="checkbox">
+				<span>{{ t('videogallery', 'Offer the next part when one ends') }}</span>
+			</label>
+			<div class="vg-grid">
+				<label class="vg-field">
+					<span>{{ t('videogallery', 'Wait before starting it (seconds)') }}</span>
+					<input v-model.number="settings.autoplay_delay" type="number" min="0" max="60">
+				</label>
+				<label class="vg-field">
+					<span>{{ t('videogallery', 'Files in a folder before it counts as a series') }}</span>
+					<input v-model.number="settings.series_minimum" type="number" min="2" max="50">
+				</label>
+			</div>
+		</section>
+
+		<!-- Sharing. -->
+		<section class="vg-card">
+			<h3>{{ t('videogallery', 'Sharing') }}</h3>
+			<label class="vg-toggle">
+				<input v-model="settings.sharing_enabled" type="checkbox">
+				<span>{{ t('videogallery', 'Let people share videos and folders from the gallery') }}</span>
+			</label>
+			<p class="vg-hint">
+				{{ t('videogallery', 'Shares are created through Nextcloud\'s own sharing, so every rule you have set elsewhere still applies. A link opens the player rather than the file list, and a link to a folder can be browsed. Where a share forbids downloading, the file itself is never sent and no outside player is offered — watching still works, because a stream is not a copy.') }}
+			</p>
+			<label class="vg-toggle">
+				<input v-model="settings.short_links" type="checkbox">
+				<span>{{ t('videogallery', 'Offer short addresses for links, where the short links app is installed') }}</span>
+			</label>
+		</section>
+
+		<!-- What is left out. -->
+		<section class="vg-card">
+			<h3>{{ t('videogallery', 'What to leave out') }}</h3>
+			<div class="vg-grid">
+				<label class="vg-field">
+					<span>{{ t('videogallery', 'Shortest video worth keeping (seconds)') }}</span>
+					<input v-model.number="settings.min_duration_seconds" type="number" min="0" max="3600">
+				</label>
+				<label class="vg-field">
+					<span>{{ t('videogallery', 'Names to ignore, one per line') }}</span>
+					<textarea v-model="ignoreNames" rows="3" spellcheck="false" />
+				</label>
+			</div>
+			<p class="vg-hint">
+				{{ t('videogallery', 'Matched anywhere in the name and without regard to case. A film downloaded from anywhere often arrives beside a "sample" — half a minute of the middle of it, with the same name and none of the point.') }}
+			</p>
+		</section>
+
 		<!-- Previews. -->
 		<section class="vg-card">
 			<h3>{{ t('videogallery', 'Previews') }}</h3>
@@ -291,6 +397,23 @@
 			<p class="vg-hint">{{ t('videogallery', 'The library gathers videos from everywhere in an account. This is simply the one obvious place to put a new one; it is created on the first visit and gets its own row on the page. Leave it empty for no such folder.') }}</p>
 
 			<details class="vg-advanced">
+				<summary>{{ t('videogallery', 'Every other number, for when you have a reason') }}</summary>
+				<p class="vg-hint">
+					{{ t('videogallery', 'These are worked out from the hardware unless you say otherwise. Zero means "decide for me".') }}
+				</p>
+				<div class="vg-grid">
+					<label v-for="knob in knobs" :key="knob.key" class="vg-field">
+						<span>{{ knob.label }}</span>
+						<select v-if="knob.options" v-model="settings[knob.key]">
+							<option v-for="option in knob.options" :key="option" :value="option">{{ option }}</option>
+						</select>
+						<input v-else-if="typeof settings[knob.key] === 'boolean'" v-model="settings[knob.key]" type="checkbox">
+						<input v-else v-model.number="settings[knob.key]" type="number" :step="knob.step ?? 1">
+					</label>
+				</div>
+			</details>
+
+			<details class="vg-advanced">
 				<summary>{{ t('videogallery', 'Paths, if ffmpeg is somewhere unusual') }}</summary>
 				<div class="vg-grid">
 					<label class="vg-field">
@@ -350,6 +473,24 @@ interface AdminState {
 	cache: Record<string, any>
 	library: Record<string, number>
 	candidates: string[]
+	devices: Array<{
+		kind: string
+		index: number
+		name: string
+		memory: number
+		enabled: boolean
+		max_sessions: number
+		active: number
+		label: string
+	}>
+	benchmark: {
+		ran_at?: number
+		encoder?: string
+		presets?: Record<string, number>
+		extra_hw_frames?: number
+		nvenc_preset?: string
+		notes?: string[]
+	}
 	memory: Array<{
 		signature: string
 		mode: string
@@ -370,6 +511,87 @@ const cache = ref(state.cache)
 const library = ref(state.library)
 const candidates = ref(state.candidates ?? [])
 const memory = ref(state.memory ?? [])
+const devices = ref(state.devices ?? [])
+const benchmark = ref(state.benchmark ?? {})
+const tuning = ref(false)
+
+/** The remaining numbers, each with a plain name. */
+const knobs = [
+	{ key: 'extra_hw_frames', label: t('videogallery', 'Frames held on the card') },
+	{ key: 'decoder_threads', label: t('videogallery', 'Decoding threads') },
+	{ key: 'nvenc_cq', label: t('videogallery', 'NVENC quality (lower is better)') },
+	{ key: 'nvenc_bframes', label: t('videogallery', 'NVENC B-frames') },
+	{ key: 'nvenc_lookahead', label: t('videogallery', 'NVENC lookahead') },
+	{ key: 'nvenc_bframes_on_card', label: t('videogallery', 'B-frames when decoding on the card') },
+	{ key: 'nvenc_lookahead_on_card', label: t('videogallery', 'Lookahead when decoding on the card') },
+	{ key: 'nvenc_tune', label: t('videogallery', 'NVENC tuning'), options: ['hq', 'll', 'ull', 'lossless'] },
+	{ key: 'nvenc_rc', label: t('videogallery', 'NVENC rate control'), options: ['vbr', 'cbr', 'constqp'] },
+	{ key: 'nvenc_multipass', label: t('videogallery', 'NVENC multipass'), options: ['disabled', 'qres', 'fullres'] },
+	{ key: 'nvenc_profile', label: t('videogallery', 'H.264 profile'), options: ['baseline', 'main', 'high'] },
+	{ key: 'x264_crf', label: t('videogallery', 'Software quality (lower is better)') },
+	{ key: 'x264_preset', label: t('videogallery', 'Software preset'), options: ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium'] },
+	{ key: 'audio_codec', label: t('videogallery', 'Sound format'), options: ['aac', 'libopus', 'libmp3lame'] },
+	{ key: 'audio_bitrate', label: t('videogallery', 'Sound bitrate (kbit/s)') },
+	{ key: 'audio_channels', label: t('videogallery', 'Sound channels') },
+	{ key: 'throttle_ahead_seconds', label: t('videogallery', 'Work ahead of the viewer by (seconds)') },
+	{ key: 'restart_distance_segments', label: t('videogallery', 'Segments before a jump restarts the encoder') },
+	{ key: 'segment_wait_seconds', label: t('videogallery', 'Wait for a converted piece (seconds)') },
+	{ key: 'copy_segment_wait_seconds', label: t('videogallery', 'Wait for a copied piece (seconds)') },
+	{ key: 'maxrate_factor', label: t('videogallery', 'Peak bitrate, as a multiple'), step: 0.1 },
+	{ key: 'bufsize_factor', label: t('videogallery', 'Buffer size, as a multiple'), step: 0.1 },
+	{ key: 'preview_fps', label: t('videogallery', 'Hover clip frames per second') },
+	{ key: 'preview_crf', label: t('videogallery', 'Hover clip quality (lower is better)') },
+	{ key: 'rail_size', label: t('videogallery', 'Videos in a row on the front page') },
+	{ key: 'sprite_columns', label: t('videogallery', 'Thumbnail strip columns') },
+	{ key: 'sprite_rows', label: t('videogallery', 'Thumbnail strip rows') },
+	{ key: 'sprite_width', label: t('videogallery', 'Thumbnail width') },
+] as Array<{ key: string, label: string, options?: string[], step?: number }>
+
+/** The ignore list is edited as lines and stored as a list. */
+const ignoreNames = computed({
+	get: () => (settings.value.ignore_names ?? []).join('\n'),
+	set: (value: string) => {
+		settings.value.ignore_names = value.split('\n').map((line) => line.trim()).filter(Boolean)
+	},
+})
+
+const benchmarkLine = computed(() => t('videogallery', 'Measured with {encoder}: a frame allowance of {frames} works here, and {preset} was chosen.', {
+	encoder: String(benchmark.value.encoder ?? ''),
+	frames: String(benchmark.value.extra_hw_frames ?? 0),
+	preset: String(benchmark.value.nvenc_preset ?? ''),
+}))
+
+function barWidth(speed: number): string {
+	const fastest = Math.max(1, ...Object.values(benchmark.value.presets ?? { a: 1 }))
+	return `${Math.round((speed / fastest) * 100)}%`
+}
+
+function setDevice(device: { index: number }, key: string, value: unknown): void {
+	const list = [...(settings.value.devices ?? [])]
+	const existing = list.find((entry: Record<string, unknown>) => Number(entry.index) === device.index)
+	if (existing) {
+		existing[key] = value
+	} else {
+		list.push({ index: device.index, [key]: value })
+	}
+	settings.value.devices = list
+	;(device as Record<string, unknown>)[key] = value
+}
+
+async function runTuner(): Promise<void> {
+	tuning.value = true
+	try {
+		const { data } = await axios.post(url('tune'))
+		benchmark.value = data.ocs.data.benchmark
+		settings.value = data.ocs.data.settings
+		devices.value = data.ocs.data.devices
+		flash(t('videogallery', 'Measured, and the settings were adjusted to match.'))
+	} catch {
+		flash(t('videogallery', 'The measurement could not be run.'))
+	} finally {
+		tuning.value = false
+	}
+}
 
 const busy = ref(false)
 const probing = ref(false)
@@ -774,6 +996,65 @@ async function reindex(reprobe: boolean): Promise<void> {
 	cursor: pointer;
 	font-size: 13px;
 	color: var(--color-text-maxcontrast);
+}
+
+.vg-tiny {
+	width: 68px;
+}
+
+.vg-bench {
+	margin-top: 14px;
+}
+
+.vg-bars {
+	display: flex;
+	flex-direction: column;
+	gap: 5px;
+	margin-top: 8px;
+}
+
+.vg-bar {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 12px;
+}
+
+.vg-bar__name {
+	width: 70px;
+	color: var(--color-text-maxcontrast);
+}
+
+.vg-bar__track {
+	flex: 1;
+	height: 6px;
+	border-radius: 3px;
+	background: var(--color-background-dark);
+	overflow: hidden;
+}
+
+.vg-bar__fill {
+	display: block;
+	height: 100%;
+	background: var(--color-primary-element);
+}
+
+.vg-bar__value {
+	width: 54px;
+	text-align: end;
+	font-variant-numeric: tabular-nums;
+}
+
+.vg-field textarea {
+	width: 100%;
+	padding: 6px 8px;
+	border: 1px solid var(--color-border);
+	border-radius: var(--border-radius-element, 8px);
+	background: var(--color-main-background);
+	color: var(--color-main-text);
+	font-family: monospace;
+	font-size: 12px;
+	resize: vertical;
 }
 
 .vg-table {

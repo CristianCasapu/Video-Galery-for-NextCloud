@@ -18,6 +18,7 @@ use OCA\VideoGallery\Service\Indexer;
 use OCA\VideoGallery\Service\Library;
 use OCA\VideoGallery\Service\PlaybackDecision;
 use OCA\VideoGallery\Service\PreviewService;
+use OCA\VideoGallery\Service\Series;
 use OCA\VideoGallery\Service\SubtitleService;
 use OCP\AppFramework\Http;
 use OCP\AppFramework\Http\Attribute\NoAdminRequired;
@@ -36,6 +37,7 @@ class ApiController extends OCSController {
 		private GalleryFolder $galleryFolder,
 		private Indexer $indexer,
 		private PreviewService $previews,
+		private Series $series,
 		private SubtitleService $subtitles,
 		private ExternalPlayer $external,
 		private PlaybackDecision $decision,
@@ -129,6 +131,8 @@ class ApiController extends OCSController {
 				: null,
 			'ladder' => $this->decision->ladder(),
 			'sourceKbps' => round($this->decision->sourceBitrateKbps($item)),
+			// Where this sits in a sequence, if it is part of one.
+			'series' => $this->series->context($userId, $item),
 		]);
 	}
 

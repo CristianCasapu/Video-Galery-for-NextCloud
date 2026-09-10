@@ -8,6 +8,8 @@ import type {
 	OpenResult,
 	Rail,
 	SpriteLayout,
+	SeriesContext,
+	SeriesEntry,
 	SubtitleOption,
 	VideoItem,
 	WatchProgress,
@@ -41,6 +43,7 @@ export async function fetchItem(fileId: number): Promise<{
 	subtitles: SubtitleOption[]
 	sprite: SpriteLayout | null
 	sourceKbps: number
+	series: SeriesContext | null
 }> {
 	const { data } = await axios.get(ocs('items/{fileId}', { fileId }))
 	return data.ocs.data
@@ -123,6 +126,234 @@ export async function closePlayback(token: string, beacon = false): Promise<void
 		}
 	}
 	await axios.delete(ocs('play/{token}', { token }))
+}
+
+// -- watching through a link -----------------------------------------------
+//
+// The same conversation as above, held by somebody who arrived with a token
+// instead of an account. Kept beside its authenticated twin so the two cannot
+// drift apart.
+
+export interface PublicShare {
+	token: string
+	label: string
+	name: string
+	isFolder: boolean
+	canDownload: boolean
+	owner: string
+	ownerDisplayName: string
+	expires: number | null
+	note: string
+}
+
+export async function publicContents(token: string, folder = '', sort = 'name_asc'): Promise<{
+	share: PublicShare
+	items: VideoItem[]
+	folders: Array<{ name: string, count: number }>
+	total: number
+}> {
+	const { data } = await axios.get(ocs('public/{token}', { token }), { params: { folder, sort } })
+	return data.ocs.data
+}
+
+export async function publicItem(token: string, fileId: number): Promise<{
+	item: VideoItem
+	subtitles: SubtitleOption[]
+	sprite: SpriteLayout | null
+	canDownload: boolean
+	next: SeriesEntry | null
+}> {
+	const { data } = await axios.get(ocs('public/{token}/items/{fileId}', { token, fileId }))
+	return data.ocs.data
+}
+
+export async function publicPlay(token: string, fileId: number, payload: {
+	client: string
+	bandwidth: number
+	profile?: string
+	start?: number
+	audioIndex?: number
+}): Promise<OpenResult> {
+	const { data } = await axios.post(ocs('public/{token}/play/{fileId}', { token, fileId }), payload)
+	return data.ocs.data
+}
+
+export async function publicPing(token: string, session: string, payload: {
+	position: number
+	buffer: number
+	stalls: number
+	bandwidth: number
+}): Promise<{ state: string, error: string | null, action: string, profile: string, reason?: string, reload?: string }> {
+	const { data } = await axios.post(ocs('public/{token}/play/{session}/ping', { token, session }), payload)
+	return data.ocs.data
+}
+
+export async function publicSwitchQuality(token: string, session: string, profile: string, position: number): Promise<{ profile: string, reload: string }> {
+	const { data } = await axios.post(ocs('public/{token}/play/{session}/report', { token, session }), { profile, position })
+	return data.ocs.data
+}
+
+export async function publicClose(token: string, session: string, beacon = false): Promise<void> {
+	if (beacon && navigator.sendBeacon) {
+		// Nothing to end on the server that a closing tab can reach without
+		// headers, so the sweep picks this one up if the request does not land.
+		navigator.sendBeacon(ocs('public/{token}/play/{session}', { token, session }), new Blob([], { type: 'text/plain' }))
+		return
+	}
+	await axios.delete(ocs('public/{token}/play/{session}', { token, session }))
+}
+
+export const publicPosterUrl = (token: string, fileId: number): string =>
+	generateUrl('/apps/videogallery/s/{token}/preview/{fileId}/poster', { token, fileId })
+
+export const publicLoopUrl = (token: string, fileId: number): string =>
+	generateUrl('/apps/videogallery/s/{token}/preview/{fileId}/loop', { token, fileId })
+
+export const publicSpriteUrl = (token: string, fileId: number): string =>
+	generateUrl('/apps/videogallery/s/{token}/preview/{fileId}/sprite', { token, fileId })
+
+export const publicSubtitleUrl = (token: string, fileId: number, index: number): string =>
+	generateUrl('/apps/videogallery/s/{token}/subtitle/{fileId}/{index}.vtt', { token, fileId, index })
+
+// -- sharing ---------------------------------------------------------------
+//
+// Shares are created and changed through Nextcloud's own sharing API, which
+// already enforces every rule an administrator may have set. Only the parts it
+// cannot know about — what is already shared from the gallery's point of view,
+// and short addresses — come from this app.
+
+const coreShares = (path = '') => generateOcsUrl('apps/files_sharing/api/v1/shares' + path)
+
+export interface GalleryShare {
+	id: string
+	type: number
+	with: string | null
+	withDisplayName: string | null
+	label: string
+	token: string | null
+	url: string | null
+	filesUrl: string | null
+	hasPassword: boolean
+	canDownload: boolean
+	expires: number | null
+	note: string
+	permissions: number
+	shortUrl?: string | null
+}
+
+export interface ShareState {
+	enabled: boolean
+	linksAllowed: boolean
+	passwordRequired: boolean
+	shortLinks: boolean
+	isFolder: boolean
+	path: string
+	name: string
+	shares: GalleryShare[]
+}
+
+export async function fetchShares(fileId: number): Promise<ShareState> {
+	const { data } = await axios.get(ocs('shares/{fileId}', { fileId }))
+	return data.ocs.data
+}
+
+export async function shareableFolders(): Promise<{ folders: Array<{ path: string, name: string, fileId: number, count: number }> }> {
+	const { data } = await axios.get(ocs('shareable-folders'))
+	return data.ocs.data
+}
+
+/** Nextcloud's own share creation, so every policy it enforces still applies. */
+export async function createShare(payload: {
+	path: string
+	shareType: number
+	shareWith?: string
+	password?: string
+	expireDate?: string
+	label?: string
+	canDownload?: boolean
+}): Promise<Record<string, unknown>> {
+	const body: Record<string, unknown> = {
+		path: payload.path,
+		shareType: payload.shareType,
+		permissions: 1,
+	}
+	if (payload.shareWith) {
+		body.shareWith = payload.shareWith
+	}
+	if (payload.password) {
+		body.password = payload.password
+	}
+	if (payload.expireDate) {
+		body.expireDate = payload.expireDate
+	}
+	if (payload.label) {
+		body.label = payload.label
+	}
+	if (payload.canDownload === false) {
+		body.attributes = JSON.stringify([{ scope: 'permissions', key: 'download', value: false }])
+	}
+	const { data } = await axios.post(coreShares(), body)
+	return data.ocs.data
+}
+
+export async function updateShare(id: string, payload: {
+	password?: string | null
+	expireDate?: string | null
+	canDownload?: boolean
+	note?: string
+}): Promise<Record<string, unknown>> {
+	const body: Record<string, unknown> = {}
+	if (payload.password !== undefined) {
+		body.password = payload.password ?? ''
+	}
+	if (payload.expireDate !== undefined) {
+		body.expireDate = payload.expireDate ?? ''
+	}
+	if (payload.note !== undefined) {
+		body.note = payload.note
+	}
+	if (payload.canDownload !== undefined) {
+		body.attributes = JSON.stringify([{ scope: 'permissions', key: 'download', value: payload.canDownload }])
+		body.hideDownload = payload.canDownload ? 'false' : 'true'
+	}
+	const { data } = await axios.put(coreShares('/' + id), body)
+	return data.ocs.data
+}
+
+export async function deleteShare(id: string): Promise<void> {
+	await axios.delete(coreShares('/' + id))
+}
+
+/** People and groups to share with, from Nextcloud's own search. */
+export async function searchSharees(search: string): Promise<Array<{ id: string, label: string, type: number }>> {
+	const { data } = await axios.get(generateOcsUrl('apps/files_sharing/api/v1/sharees'), {
+		params: { search, itemType: 'file', perPage: 15, lookup: false, shareType: [0, 1] },
+	})
+	const payload = data.ocs.data
+	const out: Array<{ id: string, label: string, type: number }> = []
+	for (const group of ['exact', 'users', 'groups'] as const) {
+		const section = payload[group]
+		if (!section) {
+			continue
+		}
+		const lists = group === 'exact' ? [section.users ?? [], section.groups ?? []] : [section]
+		for (const list of lists) {
+			for (const entry of list) {
+				const type = entry.value?.shareType ?? 0
+				const id = entry.value?.shareWith
+				if (!id || out.some((existing) => existing.id === id && existing.type === type)) {
+					continue
+				}
+				out.push({ id, label: entry.label ?? id, type })
+			}
+		}
+	}
+	return out
+}
+
+export async function shortLink(shareId: string): Promise<{ short: string | null }> {
+	const { data } = await axios.post(ocs('shares/{shareId}/short-link', { shareId }))
+	return data.ocs.data
 }
 
 export const posterUrl = (fileId: number): string =>

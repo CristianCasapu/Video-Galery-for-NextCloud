@@ -18,10 +18,14 @@ one was taken, and plays all of them in the browser — including the formats a 
 * Subtitle tracks embedded in the file are offered in the player, alongside every audio track
 * "Open in external player" hands the untouched original to VLC, Infuse or any player on the device
 * Resume where you left off, across devices
+* Share a video or a folder with a person, a group, or anyone holding a link, and
+  decide for each whether the file may be downloaded as well as watched
+* A folder of numbered files is recognised as a series, and the next part is
+  offered when one finishes
 * Temporary files live wherever the administrator points them — a fast disk away from the system drive — and
   every one of them is accounted for and removed
     ]]></description>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
     <licence>agpl</licence>
     <author mail="casapucristian@gmail.com">Cristian Casapu</author>
     <namespace>VideoGallery</namespace>

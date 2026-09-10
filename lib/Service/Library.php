@@ -17,12 +17,16 @@ use OCP\IL10N;
  * front page, and the one video that gets the big treatment at the top.
  */
 class Library {
-	private const RAIL_SIZE = 24;
+	/** How many videos a row on the front page holds. */
+	private function railSize(): int {
+		return $this->config->getInt('rail_size');
+	}
 
 	public function __construct(
 		private ItemMapper $items,
 		private ProgressMapper $progress,
 		private GalleryFolder $folder,
+		private Config $config,
 		private IL10N $l10n,
 	) {
 	}
@@ -72,7 +76,7 @@ class Library {
 
 	/** @return list<Item> */
 	private function continueWatching(string $userId): array {
-		$progress = $this->progress->unfinished($userId, self::RAIL_SIZE);
+		$progress = $this->progress->unfinished($userId, $this->railSize());
 		if ($progress === []) {
 			return [];
 		}
@@ -103,12 +107,12 @@ class Library {
 		if ($name === '') {
 			return [];
 		}
-		return $this->items->search($userId, ['folder' => $name, 'sort' => 'taken_desc'], self::RAIL_SIZE);
+		return $this->items->search($userId, ['folder' => $name, 'sort' => 'taken_desc'], $this->railSize());
 	}
 
 	/** @return list<Item> */
 	private function recent(string $userId): array {
-		return $this->items->search($userId, ['sort' => 'added_desc'], self::RAIL_SIZE);
+		return $this->items->search($userId, ['sort' => 'added_desc'], $this->railSize());
 	}
 
 	private function onThisDayTitle(): string {
@@ -125,7 +129,7 @@ class Library {
 		$month = (int)date('n');
 		$day = (int)date('j');
 		$thisYear = (int)date('Y');
-		for ($year = $thisYear - 1; $year >= $thisYear - 15 && count($out) < self::RAIL_SIZE; $year--) {
+		for ($year = $thisYear - 1; $year >= $thisYear - 15 && count($out) < $this->railSize(); $year--) {
 			$from = mktime(0, 0, 0, $month, $day, $year);
 			if ($from === false) {
 				continue;
@@ -134,7 +138,7 @@ class Library {
 				'from' => $from,
 				'to' => $from + 86400,
 				'sort' => 'taken_desc',
-			], self::RAIL_SIZE - count($out));
+			], $this->railSize() - count($out));
 			foreach ($found as $item) {
 				$out[] = $item;
 			}
@@ -164,7 +168,7 @@ class Library {
 			if ($from === false || $to === false) {
 				continue;
 			}
-			$items = $this->items->search($userId, ['from' => $from, 'to' => $to, 'sort' => 'taken_desc'], self::RAIL_SIZE);
+			$items = $this->items->search($userId, ['from' => $from, 'to' => $to, 'sort' => 'taken_desc'], $this->railSize());
 			if ($items === []) {
 				continue;
 			}
@@ -183,7 +187,7 @@ class Library {
 		if ($maxSeconds > 0) {
 			$filter['maxDuration'] = $maxSeconds;
 		}
-		return $this->items->search($userId, $filter, self::RAIL_SIZE);
+		return $this->items->search($userId, $filter, $this->railSize());
 	}
 
 	/**
@@ -203,7 +207,7 @@ class Library {
 			if ($path === '' || $this->folder->contains($path)) {
 				continue;
 			}
-			$items = $this->items->search($userId, ['folder' => $path, 'sort' => 'taken_desc'], self::RAIL_SIZE);
+			$items = $this->items->search($userId, ['folder' => $path, 'sort' => 'taken_desc'], $this->railSize());
 			if ($items === []) {
 				continue;
 			}
@@ -229,8 +233,8 @@ class Library {
 		if ($total < 5) {
 			return [];
 		}
-		$offset = random_int(0, max(0, $total - self::RAIL_SIZE));
-		return $this->items->search($userId, ['to' => $cutoff, 'sort' => 'taken_desc'], self::RAIL_SIZE, $offset);
+		$offset = random_int(0, max(0, $total - $this->railSize()));
+		return $this->items->search($userId, ['to' => $cutoff, 'sort' => 'taken_desc'], $this->railSize(), $offset);
 	}
 
 	/**

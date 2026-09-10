@@ -71,7 +71,7 @@
 			</button>
 			<div class="player__heading">
 				<span class="player__name">{{ item.basename }}</span>
-				<span class="player__mode">{{ currentChapter ? currentChapter + ' · ' + modeLabel : modeLabel }}</span>
+				<span class="player__mode">{{ heading }}</span>
 			</div>
 		</div>
 
@@ -115,6 +115,15 @@
 						<path fill="currentColor" d="M12 5V1L7 6l5 5V7a6 6 0 1 1-6 6H4a8 8 0 1 0 8-8z" />
 					</svg>
 				</button>
+				<button v-if="series?.next"
+					class="player__icon"
+					:aria-label="t('videogallery', 'Next')"
+					@click="playNext">
+					<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+						<path fill="currentColor" d="M6 18l8.5-6L6 6zM16 6h2v12h-2z" />
+					</svg>
+				</button>
+
 				<button class="player__icon" :aria-label="t('videogallery', 'Forward thirty seconds')" @click="nudge(30)">
 					<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
 						<path fill="currentColor" d="M12 5V1l5 5-5 5V7a6 6 0 1 0 6 6h2a8 8 0 1 1-8-8z" />
@@ -209,6 +218,26 @@
 			</div>
 		</div>
 
+		<!-- What follows, when this is one part of something. -->
+		<transition name="notice">
+			<div v-if="upNext" class="player__next">
+				<img v-if="upNext.item.hasPoster" class="player__next-art" :src="posterFor(upNext.item.fileId)" alt="">
+				<div class="player__next-body">
+					<p class="player__next-label">
+						{{ countdown > 0
+							? t('videogallery', 'Next in {seconds}s', { seconds: countdown })
+							: t('videogallery', 'Next') }}
+					</p>
+					<p class="player__next-title">{{ upNext.item.basename }}</p>
+					<p class="player__next-meta">{{ t('videogallery', 'Part {n} of {total}', { n: upNext.position, total: upNext.total }) }}</p>
+					<div class="player__next-actions">
+						<button class="player__next-play" @click="playNext">{{ t('videogallery', 'Play now') }}</button>
+						<button class="player__next-cancel" @click="cancelNext">{{ t('videogallery', 'Not now') }}</button>
+					</div>
+				</div>
+			</div>
+		</transition>
+
 		<ExternalPlayerDialog v-if="externalOpen"
 			:item="item"
 			@close="externalOpen = false" />
@@ -229,15 +258,48 @@ import {
 	openPlayback,
 	pingPlayback,
 	posterUrl,
+	publicClose,
+	publicItem,
+	publicPing,
+	publicPlay,
+	publicPosterUrl,
+	publicSpriteUrl,
+	publicSubtitleUrl,
+	publicSwitchQuality,
 	saveProgress,
 	spriteUrl,
 	subtitleUrl,
 	switchQuality,
 } from '../api'
-import type { AppConfig, PlaybackPlan, SpriteLayout, SubtitleOption, VideoItem } from '../types'
+import type {
+	AppConfig,
+	PlaybackPlan,
+	SeriesContext,
+	SeriesEntry,
+	SpriteLayout,
+	SubtitleOption,
+	VideoItem,
+} from '../types'
 
-const props = defineProps<{ item: VideoItem, config: AppConfig }>()
-const emit = defineEmits<{ close: [], progress: [fileId: number, position: number] }>()
+const props = defineProps<{
+	item: VideoItem
+	config: AppConfig
+	/** Set when the viewer arrived through a share link rather than an account. */
+	token?: string
+}>()
+
+/**
+ * The same player serves both, and the only difference is which door the
+ * requests go through. Keeping that difference in one place here means every
+ * feature below — quality, subtitles, chapters, gestures — works the same for
+ * a visitor with a link as for the person who owns the file.
+ */
+const shared = computed(() => (props.token ?? '') !== '')
+const emit = defineEmits<{
+	close: []
+	progress: [fileId: number, position: number]
+	play: [item: VideoItem]
+}>()
 
 const video = ref<HTMLVideoElement | null>(null)
 const scrub = ref<HTMLElement | null>(null)
@@ -265,6 +327,10 @@ const subtitles = ref<SubtitleOption[]>([])
 const sprite = ref<SpriteLayout | null>(null)
 const measuredKbps = ref(0)
 const scrubPreview = ref<{ time: number, style: Record<string, string> } | null>(null)
+const series = ref<SeriesContext | null>(null)
+const upNext = ref<SeriesEntry | null>(null)
+const countdown = ref(0)
+let countdownTimer: number | undefined
 // Browsers cannot touch a device's backlight, so "brightness" dims the picture
 // itself. On a phone in a dark room that is the part that matters anyway.
 const dimming = ref(1)
@@ -281,7 +347,24 @@ let startupMs = 0
 let touch: { x: number, y: number, mode: 'none' | 'seek' | 'volume' | 'dim', startValue: number, startTime: number } | null = null
 let gestureTimer: number | undefined
 
-const poster = computed(() => posterUrl(props.item.fileId))
+const poster = computed(() => posterFor(props.item.fileId))
+const posterFor = (fileId: number) => (shared.value ? publicPosterUrl(props.token!, fileId) : posterUrl(fileId))
+const spriteFor = (fileId: number) => (shared.value ? publicSpriteUrl(props.token!, fileId) : spriteUrl(fileId))
+const subtitleFor = (fileId: number, index: number) => (shared.value ? publicSubtitleUrl(props.token!, fileId, index) : subtitleUrl(fileId, index))
+
+/** The line under the title: where we are, and how it is being sent. */
+const heading = computed(() => {
+	const parts: string[] = []
+	if (series.value?.isSeries && series.value.position) {
+		parts.push(t('videogallery', 'Part {n} of {total}', { n: series.value.position, total: series.value.total }))
+	}
+	if (currentChapter.value) {
+		parts.push(currentChapter.value)
+	}
+	parts.push(modeLabel.value)
+	return parts.join(' · ')
+})
+
 const externalEnabled = computed(() => props.config.externalPlayer)
 const pipSupported = computed(() => typeof document !== 'undefined' && 'pictureInPictureEnabled' in document && document.pictureInPictureEnabled)
 
@@ -432,28 +515,36 @@ async function start(resumeAt?: number): Promise<void> {
 		// slower of the two between pressing play and the picture appearing.
 		loadingMessage.value = t('videogallery', 'Getting ready…')
 		const [details, measured] = await Promise.all([
-			fetchItem(props.item.fileId),
+			shared.value ? publicItem(props.token!, props.item.fileId) : fetchItem(props.item.fileId),
 			props.config.bandwidthProbe.enabled
 				? currentBandwidth(props.config.bandwidthProbe.bytes, props.config.bandwidthProbe.ttl)
 				: Promise.resolve(0),
 		])
 		measuredKbps.value = measured
 		subtitles.value = details.subtitles
+		// A link to a folder still knows what comes next inside that folder.
+		series.value = 'series' in details
+			? (details.series ?? null)
+			: (details.next ? { isSeries: true, title: '', position: null, total: details.next.total, autoplay: details.next.autoplay, delay: details.next.delay, previous: null, next: details.next } : null)
 		sprite.value = details.sprite
 		duration.value = details.item.duration || duration.value
-		const resume = resumeAt ?? (details.progress && !details.progress.finished ? details.progress.position : 0)
-		if (details.progress?.audioIndex !== undefined && details.progress.audioIndex >= 0 && audioIndex.value < 0) {
-			audioIndex.value = details.progress.audioIndex
+		const progress = 'progress' in details ? details.progress : null
+		const resume = resumeAt ?? (progress && !progress.finished ? progress.position : 0)
+		if (progress && progress.audioIndex >= 0 && audioIndex.value < 0) {
+			audioIndex.value = progress.audioIndex
 		}
 
 		loadingMessage.value = t('videogallery', 'Preparing the stream…')
-		const result = await openPlayback(props.item.fileId, {
+		const request = {
 			client: JSON.stringify(detectCapabilities()),
 			bandwidth: measuredKbps.value,
 			profile: selectedQuality.value,
 			start: resume,
 			audioIndex: audioIndex.value,
-		})
+		}
+		const result = shared.value
+			? await publicPlay(props.token!, props.item.fileId, request)
+			: await openPlayback(props.item.fileId, request)
 		plan.value = result.plan
 		sessionToken.value = result.session?.token ?? ''
 		restoreTo = resume
@@ -602,16 +693,21 @@ async function report(): Promise<void> {
 	const estimate = hls.value?.bandwidthEstimate ? hls.value.bandwidthEstimate / 1000 : measuredKbps.value
 
 	try {
-		const verdict = await pingPlayback(sessionToken.value, {
+		const report = {
 			position: element.currentTime,
 			buffer: buffered,
 			stalls,
 			bandwidth: estimate,
-			droppedFrames: element.getVideoPlaybackQuality?.().droppedVideoFrames ?? 0,
-			// Sent once: the server keeps it against this kind of file and browser,
-			// so it knows how quick this combination really is.
-			startupMs,
-		})
+		}
+		const verdict = shared.value
+			? await publicPing(props.token!, sessionToken.value, report)
+			: await pingPlayback(sessionToken.value, {
+				...report,
+				droppedFrames: element.getVideoPlaybackQuality?.().droppedVideoFrames ?? 0,
+				// Sent once: the server keeps it against this kind of file and
+				// browser, so it knows how quick this combination really is.
+				startupMs,
+			})
 		startupMs = 0
 		if (verdict.error) {
 			error.value = verdict.error
@@ -649,7 +745,9 @@ async function reload(url: string): Promise<void> {
 
 async function pushProgress(): Promise<void> {
 	const element = video.value
-	if (!element || element.currentTime < 5) {
+	// Nothing is remembered about a visitor with a link: there is no account to
+	// remember it against, and no reason to keep a record of who watched what.
+	if (!element || shared.value || element.currentTime < 5) {
 		return
 	}
 	try {
@@ -728,7 +826,9 @@ async function selectQuality(id: string): Promise<void> {
 		return
 	}
 	try {
-		const result = await switchQuality(sessionToken.value, id, element.currentTime)
+		const result = shared.value
+			? await publicSwitchQuality(props.token!, sessionToken.value, id, element.currentTime)
+			: await switchQuality(sessionToken.value, id, element.currentTime)
 		await reload(result.reload)
 	} catch {
 		say(t('videogallery', 'That quality could not be started.'))
@@ -764,7 +864,7 @@ function applySubtitleTracks(): void {
 	track.kind = 'subtitles'
 	track.label = chosen.label
 	track.srclang = chosen.language || 'und'
-	track.src = subtitleUrl(props.item.fileId, chosen.index)
+	track.src = subtitleFor(props.item.fileId, chosen.index)
 	track.default = true
 	element.appendChild(track)
 	window.setTimeout(() => {
@@ -955,7 +1055,7 @@ function onScrubHover(event: MouseEvent): void {
 			left: `${left}px`,
 			width: `${width}px`,
 			height: `${height}px`,
-			backgroundImage: `url(${spriteUrl(props.item.fileId)})`,
+			backgroundImage: `url(${spriteFor(props.item.fileId)})`,
 			backgroundSize: `${layout.columns * 100}% ${layout.rows * 100}%`,
 			backgroundPosition: `${(column / Math.max(1, layout.columns - 1)) * 100}% ${(row / Math.max(1, layout.rows - 1)) * 100}%`,
 		},
@@ -996,11 +1096,49 @@ function onLoadedMetadata(): void {
 }
 
 async function onEnded(): Promise<void> {
-	await saveProgress(props.item.fileId, {
-		position: Math.floor(duration.value),
-		duration: Math.floor(duration.value),
-		finished: true,
-	}).catch(() => undefined)
+	if (!shared.value) {
+		await saveProgress(props.item.fileId, {
+			position: Math.floor(duration.value),
+			duration: Math.floor(duration.value),
+			finished: true,
+		}).catch(() => undefined)
+	}
+
+	const next = series.value?.next
+	if (!next) {
+		emit('close')
+		return
+	}
+	upNext.value = next
+	// Counted down rather than started at once, because the viewer may well
+	// have finished for the evening — and a lecture starting by itself in a
+	// quiet room is startling.
+	if (next.autoplay) {
+		countdown.value = Math.max(0, next.delay)
+		window.clearInterval(countdownTimer)
+		countdownTimer = window.setInterval(() => {
+			countdown.value -= 1
+			if (countdown.value <= 0) {
+				playNext()
+			}
+		}, 1000)
+	}
+}
+
+function playNext(): void {
+	const next = upNext.value ?? series.value?.next
+	window.clearInterval(countdownTimer)
+	upNext.value = null
+	countdown.value = 0
+	if (next) {
+		emit('play', next.item as VideoItem)
+	}
+}
+
+function cancelNext(): void {
+	window.clearInterval(countdownTimer)
+	upNext.value = null
+	countdown.value = 0
 	emit('close')
 }
 
@@ -1051,7 +1189,9 @@ function onKey(event: KeyboardEvent): void {
 /** Closing the tab has to stop the encoder too, and there is no time to ask nicely. */
 function onUnload(): void {
 	if (sessionToken.value) {
-		closePlayback(sessionToken.value, true)
+		shared.value
+			? publicClose(props.token!, sessionToken.value, true)
+			: closePlayback(sessionToken.value, true)
 	}
 }
 
@@ -1076,13 +1216,17 @@ onBeforeUnmount(async () => {
 	window.removeEventListener('beforeunload', onUnload)
 	unlockOrientation()
 	window.clearTimeout(gestureTimer)
+	window.clearInterval(countdownTimer)
 	stopTimers()
 	window.clearTimeout(controlsTimer)
 	window.clearTimeout(noticeTimer)
 	await pushProgress()
 	teardownHls()
 	if (sessionToken.value) {
-		closePlayback(sessionToken.value).catch(() => undefined)
+		const closing = shared.value
+			? publicClose(props.token!, sessionToken.value)
+			: closePlayback(sessionToken.value)
+		closing.catch(() => undefined)
 	}
 })
 
@@ -1440,6 +1584,94 @@ defineExpose({ start })
 	font-size: 12px;
 	color: #fff;
 	text-shadow: 0 1px 3px #000;
+}
+
+.player__next {
+	position: absolute;
+	right: 24px;
+	bottom: 110px;
+	z-index: 4;
+	display: flex;
+	gap: 12px;
+	width: min(380px, 78vw);
+	padding: 12px;
+	border-radius: 12px;
+	background: rgb(20 22 26 / 95%);
+	box-shadow: 0 16px 48px rgb(0 0 0 / 70%);
+}
+
+.player__next-art {
+	width: 108px;
+	height: 61px;
+	object-fit: cover;
+	border-radius: 7px;
+	flex: 0 0 auto;
+}
+
+.player__next-body {
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.player__next-label {
+	margin: 0;
+	font-size: 11px;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: #e50914;
+}
+
+.player__next-title {
+	margin: 0;
+	font-size: 14px;
+	font-weight: 600;
+	color: #fff;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.player__next-meta {
+	margin: 0 0 6px;
+	font-size: 11px;
+	color: #99a0a8;
+}
+
+.player__next-actions {
+	display: flex;
+	gap: 6px;
+}
+
+.player__next-play,
+.player__next-cancel {
+	padding: 5px 12px;
+	border: none;
+	border-radius: 6px;
+	font-size: 12px;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.player__next-play {
+	background: #fff;
+	color: #111;
+}
+
+.player__next-cancel {
+	background: rgb(255 255 255 / 14%);
+	color: #fff;
+}
+
+@media (max-width: 700px) {
+	.player__next {
+		right: 12px;
+		left: 12px;
+		bottom: 96px;
+		width: auto;
+	}
 }
 
 .player__row {

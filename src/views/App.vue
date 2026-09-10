@@ -65,7 +65,8 @@
 						:title="rail.title"
 						:items="rail.items"
 						:previews-enabled="config.previews.enabled"
-						@play="play" />
+						@play="play"
+						@share="share" />
 				</template>
 			</template>
 
@@ -77,7 +78,8 @@
 							:key="item.fileId"
 							:item="item"
 							:previews-enabled="config.previews.enabled"
-							@play="play" />
+							@play="play"
+							@share="share" />
 					</div>
 				</section>
 				<button v-if="days.length && hasMore" class="gallery__more" @click="loadTimeline(true)">
@@ -104,6 +106,12 @@
 							{{ entry.path || '/' }} ({{ entry.count }})
 						</option>
 					</select>
+					<button v-if="folder" class="gallery__action" @click="shareFolder">
+						<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+							<path fill="currentColor" d="M18 16a3 3 0 0 0-2 .8L9 12.7V12l-.1-.7 7-4.1A3 3 0 1 0 15 5l.1.7-7 4.1a3 3 0 1 0 0 4.4l7 4.1-.1.7a3 3 0 1 0 3-3z" />
+						</svg>
+						<span>{{ t('videogallery', 'Share this folder') }}</span>
+					</button>
 				</div>
 
 				<div class="gallery__grid gallery__grid--all">
@@ -111,7 +119,8 @@
 						:key="item.fileId"
 						:item="item"
 						:previews-enabled="config.previews.enabled"
-						@play="play" />
+						@play="play"
+						@share="share" />
 				</div>
 				<p v-if="!items.length" class="gallery__empty-line">{{ t('videogallery', 'Nothing matched.') }}</p>
 				<button v-if="hasMore" class="gallery__more" @click="loadItems(true)">
@@ -125,9 +134,16 @@
 			:item="nowPlaying"
 			:config="config"
 			@close="stop"
-			@progress="onProgress" />
+			@progress="onProgress"
+			@play="play" />
 
-		<InfoDialog v-if="details" :item="details" @close="details = null" @play="play" />
+		<InfoDialog v-if="details" :item="details" @close="details = null" @play="play" @share="share" />
+
+		<ShareDialog v-if="sharing"
+			:file-id="sharing.fileId"
+			:name="sharing.name"
+			:is-folder="sharing.isFolder"
+			@close="sharing = null" />
 	</div>
 </template>
 
@@ -137,10 +153,11 @@ import { loadState } from '@nextcloud/initial-state'
 import { n, t } from '@nextcloud/l10n'
 import HeroBanner from '../components/HeroBanner.vue'
 import InfoDialog from '../components/InfoDialog.vue'
+import ShareDialog from '../components/ShareDialog.vue'
 import VideoCard from '../components/VideoCard.vue'
 import VideoPlayer from '../components/VideoPlayer.vue'
 import VideoRail from '../components/VideoRail.vue'
-import { fetchFolders, fetchItems, fetchRails, fetchTimeline, rescan } from '../api'
+import { fetchFolders, fetchItems, fetchRails, fetchTimeline, rescan, shareableFolders } from '../api'
 import type { AppConfig, Rail, VideoItem } from '../types'
 
 const config = loadState<AppConfig>('videogallery', 'config')
@@ -162,6 +179,7 @@ const folder = ref('')
 
 const nowPlaying = ref<VideoItem | null>(null)
 const details = ref<VideoItem | null>(null)
+const sharing = ref<{ fileId: number, name: string, isFolder: boolean } | null>(null)
 
 const PAGE = 120
 let searchTimer: number | undefined
@@ -303,6 +321,27 @@ function stop(): void {
 
 function showInfo(item: VideoItem): void {
 	details.value = item
+}
+
+function share(item: VideoItem): void {
+	details.value = null
+	sharing.value = { fileId: item.fileId, name: item.basename, isFolder: false }
+}
+
+/**
+ * Share the folder currently being looked at, so a whole course can be handed
+ * over in one link rather than one video at a time.
+ */
+async function shareFolder(): Promise<void> {
+	try {
+		const { folders: shareable } = await shareableFolders()
+		const match = shareable.find((entry) => entry.path === folder.value)
+		if (match) {
+			sharing.value = { fileId: match.fileId, name: match.name, isFolder: true }
+		}
+	} catch {
+		// Nothing to share, or sharing is off. The button simply does nothing.
+	}
 }
 
 function onProgress(fileId: number, position: number): void {

@@ -228,23 +228,12 @@ class SelfTest extends Command {
 
 	private function pick(InputInterface $input, OutputInterface $output): ?Item {
 		$fileId = $input->getOption('file');
-		$userId = $input->getOption('user');
 		if ($fileId !== null) {
 			$found = $this->items->byFileId((int)$fileId);
 			return $found[0] ?? null;
 		}
-		$users = [];
-		if ($userId !== null) {
-			$users[] = $userId;
-		} else {
-			foreach ($this->items->pending(1) as $any) {
-				$users[] = $any->getUserId();
-			}
-			$stats = $this->items->stats();
-			if ($stats['ok'] === 0) {
-				return null;
-			}
-		}
+		$userId = $input->getOption('user');
+		$users = $userId !== null ? [$userId] : $this->items->users();
 		foreach ($users as $candidate) {
 			// Something with a bit of length to it, so seeking has somewhere to go.
 			$found = $this->items->search($candidate, ['minDuration' => 120, 'sort' => 'duration_asc'], 1);
@@ -252,11 +241,13 @@ class SelfTest extends Command {
 				return $found[0];
 			}
 		}
-		// Fall back to anything at all.
-		foreach ($this->items->search('', [], 1) as $any) {
-			return $any;
+		// Nothing long enough; anything at all will still exercise the machinery.
+		foreach ($users as $candidate) {
+			$found = $this->items->search($candidate, ['sort' => 'duration_desc'], 1);
+			if ($found !== []) {
+				return $found[0];
+			}
 		}
-		$qb = $this->items->stats();
 		return null;
 	}
 

@@ -5,6 +5,51 @@ All notable changes to Video Gallery are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] — 2026-09-11
+
+### Sharing
+
+- Share a video or a whole folder from the gallery, with a person, a group, or
+  anyone holding a link
+- A link opens the player rather than the file list, and a folder link can be
+  browsed at any depth — stopping, always, at the edge of what was shared
+- Each share decides whether the file may be downloaded. Where it may not, the
+  file itself is never served and no link to an outside player is offered, while
+  watching carries on: a converted stream is watching, not downloading
+- Shares are created through Nextcloud's own sharing, so every rule an
+  administrator has set still applies
+- Where the short links app is installed, a share can be given a short address
+  as well as a long one, pointing at the player
+
+### Tuning
+
+- Every number the converter runs on is now a setting, and every setting can be
+  left to work itself out from the hardware
+- **Measure this machine** builds a sample as demanding as a real film, finds the
+  largest frame allowance the card accepts, times decoding on the card against
+  decoding beside it, times each preset, and verifies the winning combination
+  through the whole pipeline before keeping it
+- Machines with several graphics cards are supported: work goes to whichever
+  enabled card is carrying least, and each can be switched off or given its own
+  limit
+- Trouble with a card is now recognised wherever it appears in the encoder's
+  log rather than only at the end of it, which is where the consequences appear
+  rather than the cause. Recovery takes about three seconds instead of thirty
+
+### Watching in order
+
+- A folder of numbered files is recognised as a series, and the next part is
+  offered when one finishes, with a countdown that can be stopped
+- Ordered the way a person would order it, so part 9 comes before part 10
+- A folder of clips from a phone is not a series, and nothing starts by itself
+
+### Leaving things out
+
+- Files whose names contain "sample", or anything else on a list you can edit,
+  are never collected
+- Videos shorter than a second are set aside rather than deleted, so they are
+  not found and opened again on every sweep
+
 ## [1.0.0] — 2026-09-10
 
 First release.
@@ -96,4 +141,5 @@ First release.
 - `occ videogallery:selftest` converts part of a real file, seeks into it, checks
   the result plays, and confirms nothing was left behind
 
+[1.1.0]: https://github.com/CristianCasapu/Video-Galery-for-NextCloud/releases/latest
 [1.0.0]: https://github.com/CristianCasapu/Video-Galery-for-NextCloud/releases/latest

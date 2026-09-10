@@ -44,10 +44,43 @@ and the kind of file. A combination met before is played the way that already
 worked — which starts sooner, and quietly corrects the cases where a browser
 claims a codec it then stumbles over. Nothing about who watched what is kept.
 
+**Shares.** A video or a whole folder, with a person, a group, or anyone holding
+a link. A folder link can be browsed and everything in it watched. Each share
+decides for itself whether the file may be downloaded — and where it may not,
+the file is never sent and no outside player is offered, while watching carries
+on as normal. Shares are created through Nextcloud's own sharing, so every rule
+an administrator has set still applies, and where the
+[short links](https://github.com/CristianCasapu/shortcloud) app is installed a
+link can have a short address as well as a long one.
+
+**Watches in order.** A course or a lecture series is dozens of numbered files in
+one folder. Where a folder looks like that, the next part is offered when one
+finishes, with a countdown you can stop.
+
 **Cleans up after itself.** Nothing reaches the scratch disk without a database
 row naming it, and nothing keeps a row without a file behind it. A crashed
 encoder, a closed tab, a power cut and an uninstall all leave the same
 recognisable, removable mess, and it is removed.
+
+## Tuning itself to the machine
+
+Nothing in the conversion pipeline is a fixed number. How many frames a card
+will hold at once, which of its presets are worth using, whether decoding on it
+is faster than decoding beside it — these differ between two cards from the same
+maker in the same year, and guessing wrongly costs either speed or reliability.
+
+**Measure this machine**, on the settings page, finds out. It builds a sample as
+demanding as a real film, walks the frame allowance up until the card refuses,
+times both decode paths against each other, times every preset, and then puts
+the winning combination through exactly what playback will put it through before
+keeping it. Every figure it sets can be overridden by hand.
+
+On a machine with several cards, work goes to whichever enabled card is carrying
+least. Each can be switched off or given its own limit.
+
+When something fails anyway — and it does, because a card that handles one file
+will refuse another — the card is given up a piece at a time: the decoder first,
+which costs a fraction of the speed, and the encoder only if it must.
 
 ## The player
 

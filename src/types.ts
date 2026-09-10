@@ -86,6 +86,25 @@ export interface WatchProgress {
 	updatedAt: number
 }
 
+export interface SeriesEntry {
+	item: VideoItem
+	position: number
+	total: number
+	autoplay: boolean
+	delay: number
+}
+
+export interface SeriesContext {
+	isSeries: boolean
+	title: string
+	position: number | null
+	total: number
+	autoplay: boolean
+	delay: number
+	previous: SeriesEntry | null
+	next: SeriesEntry | null
+}
+
 export interface Rail {
 	id: string
 	title: string

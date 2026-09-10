@@ -231,13 +231,20 @@ class Janitor {
 				$expired++;
 			}
 		}
-		// Rows whose file has vanished (a manually cleared cache disk, say).
 		foreach ($this->assets->all() as $asset) {
-			if (is_file($this->paths->absolute($asset->getRelPath()))) {
+			// Rows whose file has vanished (a manually cleared cache disk, say).
+			if (!is_file($this->paths->absolute($asset->getRelPath()))) {
+				$this->forgetAsset($asset);
+				$missing++;
 				continue;
 			}
-			$this->forgetAsset($asset);
-			$missing++;
+			// Pictures made for a video that has since left the library: the file
+			// was deleted, or it turned out to be something the rules now say to
+			// leave alone. Either way nothing will ever ask for these again.
+			if ($this->items->byFileId($asset->getFileId()) === []) {
+				$freed += $this->dropAsset($asset);
+				$missing++;
+			}
 		}
 		return ['assets_expired' => $expired, 'assets_missing' => $missing, 'bytes_freed' => $freed];
 	}

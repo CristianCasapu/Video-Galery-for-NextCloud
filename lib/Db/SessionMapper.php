@@ -54,6 +54,19 @@ class SessionMapper extends QBMapper {
 		return $total;
 	}
 
+	/** How many conversions a given graphics card is carrying right now. */
+	public function countOnDevice(int $device): int {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select($qb->func()->count('*', 'total'))->from($this->getTableName())
+			->where($qb->expr()->in('state', $qb->createNamedParameter([Session::STARTING, Session::RUNNING], IQueryBuilder::PARAM_STR_ARRAY)))
+			->andWhere($qb->expr()->gt('pid', $qb->createNamedParameter(0, IQueryBuilder::PARAM_INT)))
+			->andWhere($qb->expr()->eq('device', $qb->createNamedParameter($device, IQueryBuilder::PARAM_INT)));
+		$result = $qb->executeQuery();
+		$total = (int)$result->fetchOne();
+		$result->closeCursor();
+		return $total;
+	}
+
 	/** @return list<Session> */
 	public function forUser(string $userId): array {
 		$qb = $this->db->getQueryBuilder();

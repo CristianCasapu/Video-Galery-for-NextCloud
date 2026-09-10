@@ -89,8 +89,13 @@ class Config {
 		'default_folder' => 'Video',
 
 		'index_batch' => 200,
-		'min_duration_seconds' => 0,
+		// A clip shorter than a second is a stray frame or a botched recording,
+		// never something anybody meant to keep.
+		'min_duration_seconds' => 1,
 		'excluded_paths' => [],
+		// Names that mean "this is not the film". Matched anywhere in the name,
+		// without regard to case.
+		'ignore_names' => ['sample'],
 		'external_player_enabled' => true,
 		'external_token_ttl' => 21600,
 
@@ -98,10 +103,67 @@ class Config {
 		'ffprobe_path' => '',
 		'nice_level' => 5,
 		'io_class' => 'idle',
+
+		// -- Tuning ---------------------------------------------------------
+		//
+		// Everything below is a number that used to be written into the code.
+		// What suits one machine suits another badly: the frames a card will
+		// hold at once, the presets its encoder is quick at, how far ahead it is
+		// worth working. Zero means "work it out from the hardware".
+
+		// Graphics cards to use, as [{index, enabled, max_sessions, label}].
+		// Empty means every card found, sharing the overall session limit.
+		'devices' => [],
+		'auto_tune' => true,
+		// Frames set aside on the card beyond the decoder's own needs. Too few
+		// and decoding stops; too many and it will not start.
+		'extra_hw_frames' => 0,
+		'decoder_threads' => 0,
+
+		'nvenc_tune' => 'hq',
+		'nvenc_rc' => 'vbr',
+		'nvenc_cq' => 23,
+		'nvenc_bframes' => 3,
+		// Held frames, which come out of the same pool the decoder draws on.
+		'nvenc_lookahead' => 20,
+		'nvenc_lookahead_on_card' => 0,
+		'nvenc_bframes_on_card' => 2,
+		'nvenc_multipass' => 'disabled',
+		'nvenc_spatial_aq' => false,
+		'nvenc_profile' => 'high',
+
+		'x264_crf' => 23,
+		'x265_crf' => 26,
+		'vaapi_quality' => 0,
+		'qsv_preset' => 'faster',
+
+		'audio_codec' => 'aac',
+		'audio_bitrate' => 160,
+		'audio_channels' => 2,
+
+		'throttle_ahead_seconds' => 90,
+		'restart_distance_segments' => 3,
+		'segment_wait_seconds' => 30,
+		'copy_segment_wait_seconds' => 60,
+		'maxrate_factor' => 1.5,
+		'bufsize_factor' => 3.0,
+
+		'preview_fps' => 24,
+		'preview_crf' => 30,
+		'rail_size' => 24,
+
+		// -- Watching in order ----------------------------------------------
+		'autoplay_next' => true,
+		'autoplay_delay' => 8,
+		'series_minimum' => 3,
+
+		// -- Sharing ---------------------------------------------------------
+		'sharing_enabled' => true,
+		'short_links' => true,
 	];
 
 	/** Values that are stored as JSON rather than as a scalar. */
-	private const JSON_KEYS = ['quality_ladder', 'excluded_paths'];
+	private const JSON_KEYS = ['quality_ladder', 'excluded_paths', 'ignore_names', 'devices'];
 
 	public function __construct(
 		private IAppConfig $appConfig,
@@ -217,6 +279,28 @@ class Config {
 			'upshift_stable_seconds' => max(10, min(600, (int)$value)),
 			'upshift_hysteresis' => max(1.0, min(3.0, (float)$value)),
 			'shift_cooldown' => max(5, min(300, (int)$value)),
+			'extra_hw_frames' => max(0, min(64, (int)$value)),
+			'decoder_threads' => max(0, min(64, (int)$value)),
+			'nvenc_cq' => max(1, min(51, (int)$value)),
+			'nvenc_bframes' => max(0, min(5, (int)$value)),
+			'nvenc_lookahead' => max(0, min(32, (int)$value)),
+			'nvenc_lookahead_on_card' => max(0, min(32, (int)$value)),
+			'nvenc_bframes_on_card' => max(0, min(5, (int)$value)),
+			'x264_crf', 'x265_crf' => max(0, min(51, (int)$value)),
+			'audio_bitrate' => max(32, min(1024, (int)$value)),
+			'audio_channels' => max(1, min(8, (int)$value)),
+			'throttle_ahead_seconds' => max(10, min(3600, (int)$value)),
+			'restart_distance_segments' => max(1, min(50, (int)$value)),
+			'segment_wait_seconds' => max(5, min(300, (int)$value)),
+			'copy_segment_wait_seconds' => max(5, min(600, (int)$value)),
+			'maxrate_factor' => max(1.0, min(4.0, (float)$value)),
+			'bufsize_factor' => max(1.0, min(10.0, (float)$value)),
+			'preview_fps' => max(1, min(60, (int)$value)),
+			'preview_crf' => max(0, min(51, (int)$value)),
+			'rail_size' => max(6, min(100, (int)$value)),
+			'autoplay_delay' => max(0, min(60, (int)$value)),
+			'series_minimum' => max(2, min(50, (int)$value)),
+			'min_duration_seconds' => max(0, min(3600, (int)$value)),
 			default => $value,
 		};
 	}

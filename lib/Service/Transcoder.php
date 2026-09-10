@@ -23,9 +23,6 @@ use Psr\Log\LoggerInterface;
  * for it to grind through the intervening hour.
  */
 class Transcoder {
-	/** How far ahead of the viewer the encoder may get before it is paused. */
-	private const THROTTLE_AHEAD_SECONDS = 90;
-	private const RESTART_DISTANCE_SEGMENTS = 3;
 
 
 
@@ -44,6 +41,7 @@ class Transcoder {
 		private Config $config,
 		private PlaybackDecision $decision,
 		private SegmentPlan $plan,
+		private Tuning $tuning,
 		private Janitor $janitor,
 		private LoggerInterface $logger,
 	) {
@@ -71,7 +69,13 @@ class Transcoder {
 		$session->setFileId($item->getFileId());
 		$session->setMode($mode);
 		$session->setProfile((string)$planned['profile']);
-		$session->setEncoder($mode === PlaybackDecision::DIRECT ? '' : $this->ffmpeg->chosenEncoder());
+		$encoder = $mode === PlaybackDecision::DIRECT ? '' : $this->ffmpeg->chosenEncoder();
+		$session->setEncoder($encoder);
+		if ($encoder !== '') {
+			// On a machine with more than one card, the work goes to whichever is
+			// carrying least, so they share the load instead of queueing.
+			$session->setDevice($this->tuning->pickDevice($encoder)['index']);
+		}
 		$session->setDir($dir);
 		$session->setSegmentDur($segmentDuration);
 		$session->setSegmentType($this->segmentTypeFor($item, $mode));
@@ -368,7 +372,7 @@ class Transcoder {
 			// make sure the pass is running, let it off its leash, and wait.
 			$this->ensureRunning($session);
 			$this->resume($session);
-			$found = $this->waitForSegment($session, $index, 60);
+			$found = $this->waitForSegment($session, $index, $this->tuning->segmentWait(true));
 			if ($found !== null) {
 				$this->onSegmentServed($session, $index);
 			}
@@ -382,7 +386,7 @@ class Transcoder {
 		$running = $session->getPid() > 0 && $this->janitor->isAlive($session->getPid());
 		$reachable = $running
 			&& $index >= $session->getStartSegment()
-			&& $index <= $this->highestSegment($session) + self::RESTART_DISTANCE_SEGMENTS;
+			&& $index <= $this->highestSegment($session) + $this->tuning->restartDistance();
 
 		if (!$reachable) {
 			// Either nothing is running, or the viewer has jumped somewhere the
@@ -416,10 +420,10 @@ class Transcoder {
 		if (!$this->ffmpeg->isHardware($session->getEncoder())) {
 			return null;
 		}
-		$reason = $this->lastError($session);
-		if (!$this->looksLikeHardwareFailure($reason)) {
+		if (!$this->hardwareTroubleInLog($session)) {
 			return null;
 		}
+		$reason = $this->firstTrouble($session) ?: $this->lastError($session);
 
 		// Give up the card a piece at a time rather than all at once. Decoding
 		// on it is the fragile half — how many frames a card will hold at once
@@ -468,13 +472,62 @@ class Transcoder {
 		$this->start($session, $index);
 	}
 
+	/**
+	 * Whether the encoder ran into trouble with the card, anywhere in its log.
+	 *
+	 * The tail of a log is the wrong place to look for this. What goes wrong
+	 * first is the decoder losing its frames, and what is printed last is some
+	 * downstream consequence of that — a filter that cannot be fed, a queue that
+	 * would not drain — which reads like a quite different problem. The whole
+	 * log is read instead, and the first real complaint in it is the one worth
+	 * repeating to anybody.
+	 */
+	private function hardwareTroubleInLog(Session $session): bool {
+		return $this->firstTrouble($session) !== null;
+	}
+
+	/** The first line in the log that names a hardware problem. */
+	private function firstTrouble(Session $session): ?string {
+		$log = $session->getDir() . '/ffmpeg.log';
+		if (!is_file($log)) {
+			return null;
+		}
+		$handle = @fopen($log, 'rb');
+		if (!is_resource($handle)) {
+			return null;
+		}
+		try {
+			$read = 0;
+			while (($line = fgets($handle)) !== false && $read < 262144) {
+				$read += strlen($line);
+				$line = trim($line);
+				if ($line !== '' && $this->looksLikeHardwareFailure($line)) {
+					return mb_substr($line, 0, 300);
+				}
+			}
+		} finally {
+			fclose($handle);
+		}
+		return null;
+	}
+
 	/** Whether an encoder's complaint is about the hardware rather than the file. */
 	private function looksLikeHardwareFailure(string $message): bool {
 		$message = strtolower($message);
 		foreach ([
+			// The card refusing to start at all.
 			'cuda', 'cuvid', 'nvenc', 'no capable devices', 'no device available',
 			'device creation failed', 'vaapi', 'qsv', 'failed to initialise',
 			'cannot load libcuda', 'driver version', 'no such device', 'permission denied',
+			// The card running out of room part way through, which is the more
+			// common failure and reads nothing like the others.
+			'surfaces left', 'no free surface', 'decoder surfaces',
+			'hwaccel initialisation returned error', 'failed setup for format',
+			'impossible to convert between the formats',
+			'out of memory', 'cannot allocate memory',
+			// What the rest of the pipeline says once the card has let it down.
+			'inject frame into filter network', 'function not implemented',
+			'error while decoding stream',
 		] as $needle) {
 			if (str_contains($message, $needle)) {
 				return true;
@@ -575,6 +628,12 @@ class Transcoder {
 		$hwDecode = $onCard;
 
 		$args = [$binary, '-hide_banner', '-loglevel', 'warning', '-nostdin', '-y'];
+		$decoderThreads = $this->config->getInt('decoder_threads');
+		if ($decoderThreads > 0) {
+			// Fewer decoding threads means fewer frames held at once, which is
+			// what a card short of surfaces needs.
+			$args = array_merge($args, ['-threads', (string)$decoderThreads]);
+		}
 
 		// Hardware decoding, where the encoder takes the frames directly and they
 		// never have to come back to main memory.
@@ -583,25 +642,25 @@ class Transcoder {
 			if ($onCard) {
 				$args = array_merge($args, ['-hwaccel_output_format', 'cuda']);
 			}
+			if ($session->getDevice() > 0) {
+				$args = array_merge($args, ['-hwaccel_device', (string)$session->getDevice()]);
+			}
 			// Frames stay on the card, and the encoder holds on to a good many of
 			// them at once for its lookahead and its B-frames. Without room set
 			// aside for that, the decoder runs out of surfaces part way through
 			// and the whole conversion collapses with "No decoder surfaces left".
-			$args = array_merge($args, ['-extra_hw_frames', (string)FFmpeg::EXTRA_HW_FRAMES]);
-			if ($this->config->getInt('nvenc_device') > 0) {
-				$args = array_merge($args, ['-hwaccel_device', (string)$this->config->getInt('nvenc_device')]);
-			}
+			$args = array_merge($args, ['-extra_hw_frames', (string)$this->tuning->extraHwFrames()]);
 		} elseif ($hwDecode && $family === 'vaapi') {
 			$args = array_merge($args, [
 				'-hwaccel', 'vaapi',
 				'-hwaccel_device', $this->config->getString('vaapi_device'),
-				'-extra_hw_frames', (string)FFmpeg::EXTRA_HW_FRAMES,
+				'-extra_hw_frames', (string)$this->tuning->extraHwFrames(),
 			]);
 			if ($onCard) {
 				$args = array_merge($args, ['-hwaccel_output_format', 'vaapi']);
 			}
 		} elseif ($hwDecode && $family === 'qsv') {
-			$args = array_merge($args, ['-hwaccel', 'qsv', '-extra_hw_frames', (string)FFmpeg::EXTRA_HW_FRAMES]);
+			$args = array_merge($args, ['-hwaccel', 'qsv', '-extra_hw_frames', (string)$this->tuning->extraHwFrames()]);
 			if ($onCard) {
 				$args = array_merge($args, ['-hwaccel_output_format', 'qsv']);
 			}
@@ -635,7 +694,13 @@ class Transcoder {
 		if ($mode === PlaybackDecision::REMUX) {
 			$args = array_merge($args, ['-c:a', 'copy']);
 		} else {
-			$args = array_merge($args, ['-c:a', 'aac', '-b:a', '160k', '-ac', '2', '-af', 'aresample=async=1']);
+			$audio = $this->tuning->audio();
+			$args = array_merge($args, [
+				'-c:a', $audio['codec'],
+				'-b:a', $audio['bitrate'] . 'k',
+				'-ac', (string)$audio['channels'],
+				'-af', 'aresample=async=1',
+			]);
 		}
 
 		$dir = $session->getDir();
@@ -719,36 +784,45 @@ class Transcoder {
 	 * @return list<string>
 	 */
 	private function videoArgs(string $family, ?array $size, int $videoKbps, int $segmentDuration, bool $onCard): array {
-		$maxrate = (int)round($videoKbps * 1.5);
-		$bufsize = (int)round($videoKbps * 3);
-		// A keyframe exactly on every segment boundary is what lets a segment
-		// stand on its own, and what makes the boundaries ours to choose.
-		$keyframes = ['-force_key_frames', 'expr:gte(t,n_forced*' . $segmentDuration . ')'];
+		$factors = $this->tuning->rateFactors();
+		$maxrate = (int)round($videoKbps * $factors['maxrate']);
+		$bufsize = (int)round($videoKbps * $factors['bufsize']);
 		$dimensions = $size === null ? '' : $size['width'] . ':' . $size['height'];
+		// A keyframe exactly on every boundary is what lets a segment stand on
+		// its own, and what makes the boundaries ours to choose.
+		$keyframes = ['-force_key_frames', 'expr:gte(t,n_forced*' . $segmentDuration . ')'];
 
 		return match ($family) {
 			'nvenc' => array_merge(
 				$dimensions !== '' ? ['-vf', ($onCard ? 'scale_cuda' : 'scale') . '=' . $dimensions] : [],
-				['-c:v', 'h264_nvenc', '-preset', $this->config->getString('nvenc_preset'), '-tune', 'hq',
-					'-rc', 'vbr', '-cq', '23', '-profile:v', 'high'],
+				['-c:v', 'h264_nvenc',
+					'-preset', $this->tuning->nvencPreset(),
+					'-tune', $this->config->getString('nvenc_tune'),
+					'-rc', $this->config->getString('nvenc_rc'),
+					'-cq', (string)$this->config->getInt('nvenc_cq'),
+					'-profile:v', $this->config->getString('nvenc_profile')],
 				// Looking ahead lets the encoder spend its bits more wisely, and
-				// it pays for that by holding twenty frames at once. When the
-				// decoder is on the same card those frames come out of the same
-				// small pool, and it starves — so the lookahead is kept only
-				// where the frames are in main memory and cost nothing to hold.
-				$onCard ? ['-bf', '2'] : ['-rc-lookahead', '20', '-bf', '3'],
+				// it pays for that by holding frames. When the decoder is on the
+				// same card those frames come out of the same small pool and it
+				// starves, so the allowance is separate for the two cases.
+				$this->tuning->lookahead($onCard) > 0 ? ['-rc-lookahead', (string)$this->tuning->lookahead($onCard)] : [],
+				['-bf', (string)$this->tuning->bFrames($onCard)],
+				$this->config->getString('nvenc_multipass') !== 'disabled'
+					? ['-multipass', $this->config->getString('nvenc_multipass')] : [],
+				$this->config->getBool('nvenc_spatial_aq') ? ['-spatial-aq', '1'] : [],
 				$videoKbps > 0 ? ['-b:v', $videoKbps . 'k', '-maxrate', $maxrate . 'k', '-bufsize', $bufsize . 'k'] : [],
 				$keyframes,
 			),
 			'vaapi' => array_merge(
 				['-vf', ($onCard ? '' : 'format=nv12,hwupload,') . ($dimensions !== '' ? 'scale_vaapi=' . $dimensions : 'scale_vaapi')],
 				['-c:v', 'h264_vaapi', '-profile:v', 'high'],
+				$this->config->getInt('vaapi_quality') > 0 ? ['-quality', (string)$this->config->getInt('vaapi_quality')] : [],
 				$videoKbps > 0 ? ['-b:v', $videoKbps . 'k', '-maxrate', $maxrate . 'k'] : [],
 				$keyframes,
 			),
 			'qsv' => array_merge(
 				$dimensions !== '' ? ['-vf', 'scale_qsv=' . $dimensions] : [],
-				['-c:v', 'h264_qsv', '-preset', 'faster'],
+				['-c:v', 'h264_qsv', '-preset', $this->config->getString('qsv_preset')],
 				$videoKbps > 0 ? ['-b:v', $videoKbps . 'k', '-maxrate', $maxrate . 'k'] : [],
 				$keyframes,
 			),
@@ -760,7 +834,9 @@ class Transcoder {
 			),
 			default => array_merge(
 				$dimensions !== '' ? ['-vf', 'scale=' . $dimensions] : [],
-				['-c:v', 'libx264', '-preset', $this->config->getString('x264_preset'), '-crf', '23',
+				['-c:v', 'libx264',
+					'-preset', $this->config->getString('x264_preset'),
+					'-crf', (string)$this->config->getInt('x264_crf'),
 					'-profile:v', 'high', '-pix_fmt', 'yuv420p'],
 				$videoKbps > 0 ? ['-maxrate', $maxrate . 'k', '-bufsize', $bufsize . 'k'] : [],
 				$keyframes,
@@ -820,12 +896,26 @@ class Transcoder {
 	}
 
 	/** Wait for a segment to be written, giving up rather than hanging a request. */
-	private function waitForSegment(Session $session, int $index, int $timeoutSeconds = 30): ?string {
+	private function waitForSegment(Session $session, int $index, ?int $timeoutSeconds = null): ?string {
+		$timeoutSeconds ??= $this->tuning->segmentWait($this->isCopyMode($session->getMode()));
 		$path = $this->segmentPath($session, $index);
 		$deadline = microtime(true) + $timeoutSeconds;
+		$checkedLog = 0.0;
 		while (microtime(true) < $deadline) {
 			if (is_file($path)) {
 				return $path;
+			}
+			// An encoder that cannot get frames from the card does not stop: it
+			// keeps going and keeps complaining, and waiting out the whole
+			// timeout to discover that wastes half a minute of somebody's
+			// evening. The log is glanced at instead.
+			if (microtime(true) - $checkedLog > 2.0) {
+				$checkedLog = microtime(true);
+				if ($this->highestSegment($session) === $session->getStartSegment()
+					&& !is_file($this->segmentPath($session, $session->getStartSegment()))
+					&& $this->hardwareTroubleInLog($session)) {
+					return null;
+				}
 			}
 			if ($session->getPid() > 0 && !$this->janitor->isAlive($session->getPid())) {
 				// The encoder is gone. If it finished the job the file will be
@@ -866,10 +956,11 @@ class Transcoder {
 		if ($session->getPid() <= 0 || !$this->janitor->isAlive($session->getPid())) {
 			return;
 		}
+		$ahead = $this->tuning->throttleAhead();
 		$aheadSeconds = $this->producedSeconds($session) - $playbackSeconds;
-		if ($aheadSeconds > self::THROTTLE_AHEAD_SECONDS) {
+		if ($aheadSeconds > $ahead) {
 			$this->pause($session);
-		} elseif ($aheadSeconds < self::THROTTLE_AHEAD_SECONDS * 0.6) {
+		} elseif ($aheadSeconds < $ahead * 0.6) {
 			$this->resume($session);
 		}
 	}
@@ -1008,6 +1099,6 @@ class Transcoder {
 	}
 
 	public function slotAvailable(): bool {
-		return $this->activeCount() < $this->config->getInt('max_sessions');
+		return $this->activeCount() < $this->tuning->totalSessionLimit();
 	}
 }

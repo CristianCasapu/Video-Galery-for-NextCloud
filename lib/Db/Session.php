@@ -43,6 +43,10 @@ use OCP\AppFramework\Db\Entity;
  * @method void setAudioIndex(int $audioIndex)
  * @method int getGeneration()
  * @method void setGeneration(int $generation)
+ * @method int getDevice()
+ * @method void setDevice(int $device)
+ * @method string|null getShareToken()
+ * @method void setShareToken(?string $shareToken)
  * @method int getCreatedAt()
  * @method void setCreatedAt(int $createdAt)
  * @method int getLastSeen()
@@ -75,6 +79,8 @@ class Session extends Entity implements \JsonSerializable {
 	protected string $state = self::STARTING;
 	protected int $audioIndex = -1;
 	protected int $generation = 1;
+	protected int $device = 0;
+	protected ?string $shareToken = null;
 	protected int $createdAt = 0;
 	protected int $lastSeen = 0;
 	protected ?string $error = null;
@@ -88,6 +94,7 @@ class Session extends Entity implements \JsonSerializable {
 		$this->addType('durationMs', 'integer');
 		$this->addType('audioIndex', 'integer');
 		$this->addType('generation', 'integer');
+		$this->addType('device', 'integer');
 		$this->addType('createdAt', 'integer');
 		$this->addType('lastSeen', 'integer');
 	}
@@ -111,6 +118,7 @@ class Session extends Entity implements \JsonSerializable {
 			'startSegment' => $this->startSegment,
 			'audioIndex' => $this->audioIndex,
 			'generation' => $this->generation,
+			'device' => $this->device,
 			'createdAt' => $this->createdAt,
 			'error' => $this->error,
 		];

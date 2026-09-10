@@ -312,6 +312,7 @@ class FFmpeg {
 		}
 		$caps['context'] = $this->context();
 		$caps['gpu'] = $this->gpuVisibility();
+		$caps['devices'] = $this->devices();
 		return $caps;
 	}
 
@@ -350,6 +351,72 @@ class FFmpeg {
 			$error = $result['timedOut'] ? 'timed out' : 'exit code ' . $result['code'];
 		}
 		return ['ok' => false, 'error' => $this->firstLine($error), 'ms' => $ms];
+	}
+
+	/**
+	 * The graphics cards on this machine.
+	 *
+	 * Reported by the driver rather than guessed, because the answer decides how
+	 * much work can be run at once and where to send it. A machine with one
+	 * modest card and a machine with four large ones want quite different
+	 * treatment, and neither should have to be told which it is.
+	 *
+	 * @return list<array<string, mixed>>
+	 */
+	public function devices(): array {
+		$devices = [];
+		if ($this->canRunProcesses() && is_executable('/usr/bin/nvidia-smi')) {
+			$result = $this->run([
+				'/usr/bin/nvidia-smi',
+				'--query-gpu=index,name,memory.total,driver_version',
+				'--format=csv,noheader,nounits',
+			], 20);
+			foreach (explode("\n", $result['out']) as $line) {
+				$fields = array_map('trim', explode(',', $line));
+				if (count($fields) < 3 || !is_numeric($fields[0])) {
+					continue;
+				}
+				$name = $fields[1];
+				$devices[] = [
+					'kind' => 'nvidia',
+					'index' => (int)$fields[0],
+					'name' => $name,
+					'memory' => (int)$fields[2],
+					'driver' => $fields[3] ?? '',
+					'encoders' => $this->nvencSessionLimit($name),
+				];
+			}
+		}
+		foreach (glob('/dev/dri/renderD*') ?: [] as $node) {
+			$devices[] = [
+				'kind' => 'dri',
+				'index' => count($devices),
+				'name' => basename($node),
+				'path' => $node,
+				'memory' => 0,
+				'encoders' => 2,
+			];
+		}
+		return $devices;
+	}
+
+	/**
+	 * How many conversions a card will run at once.
+	 *
+	 * NVIDIA caps this in the driver, and the cap depends on what the card was
+	 * sold as rather than on what it can do: the professional cards have no
+	 * limit worth speaking of, while the consumer ones are held to a handful.
+	 * These are starting points, and the administrator can say otherwise.
+	 */
+	private function nvencSessionLimit(string $name): int {
+		$name = strtolower($name);
+		foreach (['quadro', 'tesla', 'rtx a', 'rtx 6000', 'rtx 5000', 'rtx 4000', ' l4', ' l40', ' a10', ' a30', ' a40', ' a100', ' h100'] as $professional) {
+			if (str_contains($name, $professional)) {
+				return 16;
+			}
+		}
+		// Consumer cards: eight since the 2023 driver change, three before it.
+		return 8;
 	}
 
 	/**

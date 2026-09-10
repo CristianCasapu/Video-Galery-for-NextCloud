@@ -56,6 +56,16 @@
 					<path fill="currentColor" d="M8 5v14l11-7z" />
 				</svg>
 			</button>
+
+			<button v-if="sharable"
+				class="card__share"
+				:aria-label="t('videogallery', 'Share')"
+				:title="t('videogallery', 'Share')"
+				@click.stop="$emit('share', item)">
+				<svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">
+					<path fill="currentColor" d="M18 16a3 3 0 0 0-2 .8L9 12.7V12l-.1-.7 7-4.1A3 3 0 1 0 15 5l.1.7-7 4.1a3 3 0 1 0 0 4.4l7 4.1-.1.7a3 3 0 1 0 3-3z" />
+				</svg>
+			</button>
 		</div>
 
 		<div class="card__meta">
@@ -68,19 +78,24 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { t } from '@nextcloud/l10n'
-import { loopUrl, posterUrl } from '../api'
+import { loopUrl, posterUrl, publicLoopUrl, publicPosterUrl } from '../api'
 import type { VideoItem } from '../types'
 
 const props = withDefaults(defineProps<{
 	item: VideoItem
 	wide?: boolean
 	previewsEnabled?: boolean
+	sharable?: boolean
+	/** Set when this card is on a page reached through a share link. */
+	token?: string
 }>(), {
 	wide: false,
 	previewsEnabled: true,
+	sharable: true,
+	token: '',
 })
 
-defineEmits<{ play: [item: VideoItem] }>()
+defineEmits<{ play: [item: VideoItem], share: [item: VideoItem] }>()
 
 const hovering = ref(false)
 const showLoop = ref(false)
@@ -90,8 +105,14 @@ const posterFailed = ref(false)
 const loop = ref<HTMLVideoElement | null>(null)
 let timer: number | undefined
 
-const poster = computed(() => posterUrl(props.item.fileId))
-const loopSrc = computed(() => loopUrl(props.item.fileId))
+// A visitor with a link has no account, so the pictures have to come through
+// the link as well.
+const poster = computed(() => (props.token
+	? publicPosterUrl(props.token, props.item.fileId)
+	: posterUrl(props.item.fileId)))
+const loopSrc = computed(() => (props.token
+	? publicLoopUrl(props.token, props.item.fileId)
+	: loopUrl(props.item.fileId)))
 
 const cardStyle = computed(() => ({
 	// Portrait clips get a taller frame rather than being cropped to a letterbox.
@@ -303,6 +324,33 @@ onBeforeUnmount(() => window.clearTimeout(timer))
 .card--active .card__play {
 	opacity: 1;
 	transform: scale(1);
+}
+
+.card__share {
+	position: absolute;
+	right: 8px;
+	bottom: 8px;
+	display: grid;
+	place-items: center;
+	width: 30px;
+	height: 30px;
+	border: none;
+	border-radius: 50%;
+	background: rgb(0 0 0 / 62%);
+	color: #fff;
+	opacity: 0;
+	transform: translateY(4px);
+	transition: opacity 150ms ease, transform 150ms ease, background 120ms ease;
+	cursor: pointer;
+}
+
+.card--active .card__share {
+	opacity: 1;
+	transform: translateY(0);
+}
+
+.card__share:hover {
+	background: #e50914;
 }
 
 .card__meta {

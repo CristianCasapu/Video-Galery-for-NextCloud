@@ -83,6 +83,14 @@ class ItemMapper extends QBMapper {
 			$qb->andWhere($qb->expr()->like('path', $qb->createNamedParameter(
 				$this->db->escapeLikeParameter($folder) . '/%',
 			)));
+			if (($filter['directOnly'] ?? false) === true) {
+				// Only what sits in this folder itself, not in the folders below it.
+				$qb->andWhere($qb->expr()->notLike('path', $qb->createNamedParameter(
+					$this->db->escapeLikeParameter($folder) . '/%/%',
+				)));
+			}
+		} elseif (($filter['directOnly'] ?? false) === true) {
+			$qb->andWhere($qb->expr()->notLike('path', $qb->createNamedParameter('%/%')));
 		}
 		if (!empty($filter['query'])) {
 			$needle = '%' . $this->db->escapeLikeParameter((string)$filter['query']) . '%';
@@ -199,6 +207,47 @@ class ItemMapper extends QBMapper {
 	}
 
 	/**
+	 * The folders directly inside one folder, with how many videos each holds
+	 * altogether, counting everything below it.
+	 *
+	 * Read from the paths alone rather than from the rows, so a folder with
+	 * thousands of videos in it costs the same as one with three.
+	 *
+	 * @return list<array{name: string, count: int}>
+	 */
+	public function subfolders(string $userId, string $scope): array {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('path')->from($this->getTableName())
+			->where($qb->expr()->eq('user_id', $qb->createNamedParameter($userId)))
+			->andWhere($qb->expr()->eq('status', $qb->createNamedParameter('ok')));
+		$prefix = '';
+		if ($scope !== '') {
+			$prefix = rtrim($scope, '/') . '/';
+			$qb->andWhere($qb->expr()->like('path', $qb->createNamedParameter(
+				$this->db->escapeLikeParameter($prefix) . '%',
+			)));
+		}
+		$result = $qb->executeQuery();
+		$counts = [];
+		while ($row = $result->fetch()) {
+			$relative = $prefix === '' ? (string)$row['path'] : substr((string)$row['path'], strlen($prefix));
+			$slash = strpos($relative, '/');
+			if ($slash === false) {
+				continue;
+			}
+			$name = substr($relative, 0, $slash);
+			$counts[$name] = ($counts[$name] ?? 0) + 1;
+		}
+		$result->closeCursor();
+		uksort($counts, 'strnatcasecmp');
+		$out = [];
+		foreach ($counts as $name => $count) {
+			$out[] = ['name' => (string)$name, 'count' => $count];
+		}
+		return $out;
+	}
+
+	/**
 	 * Items still needing a probe, oldest first.
 	 *
 	 * @return list<Item>
@@ -236,6 +285,27 @@ class ItemMapper extends QBMapper {
 			$qb->andWhere($qb->expr()->eq('user_id', $qb->createNamedParameter($userId)));
 		}
 		return $this->findEntities($qb);
+	}
+
+	/**
+	 * The accounts that have anything in the library, busiest first.
+	 *
+	 * @return list<string>
+	 */
+	public function users(): array {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('user_id')->selectAlias($qb->func()->count('*'), 'total')
+			->from($this->getTableName())
+			->where($qb->expr()->eq('status', $qb->createNamedParameter('ok')))
+			->groupBy('user_id')
+			->orderBy('total', 'DESC');
+		$result = $qb->executeQuery();
+		$users = [];
+		while ($row = $result->fetch()) {
+			$users[] = (string)$row['user_id'];
+		}
+		$result->closeCursor();
+		return $users;
 	}
 
 	/** @return list<Item> */
@@ -340,6 +410,7 @@ class ItemMapper extends QBMapper {
 			'ok' => $byStatus['ok'] ?? 0,
 			'pending' => ($byStatus['pending'] ?? 0) + ($byStatus['stale'] ?? 0),
 			'failed' => $byStatus['failed'] ?? 0,
+			'excluded' => $byStatus['excluded'] ?? 0,
 		];
 	}
 }

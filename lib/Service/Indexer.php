@@ -41,6 +41,9 @@ class Indexer {
 	) {
 	}
 
+	/** A file that was looked at, understood, and deliberately left out. */
+	public const EXCLUDED = 'excluded';
+
 	public function isVideo(File $file): bool {
 		if ($this->isMisfiled($file->getName())) {
 			return false;
@@ -65,7 +68,29 @@ class Indexer {
 	 */
 	private function isMisfiled(string $name): bool {
 		$lower = strtolower($name);
-		return str_ends_with($lower, '.d.mts') || str_ends_with($lower, '.d.ts') || str_ends_with($lower, '.d.cts');
+		if (str_ends_with($lower, '.d.mts') || str_ends_with($lower, '.d.ts') || str_ends_with($lower, '.d.cts')) {
+			return true;
+		}
+		return $this->isIgnoredName($name);
+	}
+
+	/**
+	 * Names the administrator has said are not worth collecting.
+	 *
+	 * A film downloaded from anywhere often arrives beside a "sample" — thirty
+	 * seconds of the middle of it, with the same name and none of the point.
+	 * Matched anywhere in the name and without regard to case, because those
+	 * files are named every way round.
+	 */
+	public function isIgnoredName(string $name): bool {
+		$lower = mb_strtolower($name);
+		foreach ($this->config->getArray('ignore_names') as $needle) {
+			$needle = mb_strtolower(trim((string)$needle));
+			if ($needle !== '' && str_contains($lower, $needle)) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/** True when a path is one the administrator asked the app to leave alone. */
@@ -219,7 +244,62 @@ class Indexer {
 				$stats['removed']++;
 			}
 		}
+		$stats['removed'] += $this->dropNowExcluded($userId);
 		return $stats;
+	}
+
+	/**
+	 * Items already in the library that the rules would no longer collect.
+	 *
+	 * The rules can change after a file has been indexed — a minimum length
+	 * raised, a word added to the ignore list — and a library that only applies
+	 * them to new files would keep whatever it happened to gather first.
+	 */
+	private function dropNowExcluded(string $userId): int {
+		$minimumMs = $this->config->getInt('min_duration_seconds') * 1000;
+		$removed = 0;
+		$offset = 0;
+		$page = 1000;
+		// Paged, because a library can hold far more than one query will return.
+		while (true) {
+	$batch = $this->mapper->search($userId, ['includeFailed' => true], $page, $offset);
+			if ($batch === []) {
+				break;
+			}
+			$kept = 0;
+			foreach ($batch as $item) {
+				// A name or a folder the rules reject is dropped outright:
+				// discovery skips those, so nothing will find them again.
+				if ($this->isIgnoredName($item->getName()) || $this->isExcluded($item->getPath())) {
+					$this->mapper->deleteByFileId($item->getFileId(), $userId);
+					$removed++;
+					continue;
+				}
+				$known = $item->getDurationMs() > 0;
+				$tooShort = $minimumMs > 0 && $known && $item->getDurationMs() < $minimumMs;
+				if ($tooShort && $item->getStatus() !== self::EXCLUDED) {
+					$item->setStatus(self::EXCLUDED);
+					$item->setFailReason('shorter than the shortest video worth keeping');
+					$this->mapper->update($item);
+					$removed++;
+					continue;
+				}
+				// The rule may have been relaxed since; something set aside that
+				// now qualifies is simply allowed back.
+				if (!$tooShort && $item->getStatus() === self::EXCLUDED && $known) {
+					$item->setStatus('stale');
+					$item->setFailReason(null);
+					$this->mapper->update($item);
+				}
+				$kept++;
+			}
+			// Rows that went shift the window, so only what stayed advances it.
+			$offset += $kept;
+			if (count($batch) < $page) {
+				break;
+			}
+		}
+		return $removed;
 	}
 
 	/**
@@ -323,9 +403,19 @@ class Indexer {
 			return $this->fail($item, 'ffprobe found no video stream');
 		}
 
+		// Too short to be anything: a stray frame, a recording that failed, the
+		// half second a camera writes when a button is pressed by accident.
 		$minimum = $this->config->getInt('min_duration_seconds');
 		if ($minimum > 0 && $data['duration_ms'] < $minimum * 1000) {
-			$this->mapper->deleteByFileId($item->getFileId(), $item->getUserId());
+			// Set aside rather than deleted. A deleted row is found again by the
+			// very next sweep and opened again to reach the same conclusion; a
+			// row marked as set aside is a decision the library remembers.
+			$item->setDurationMs((int)$data['duration_ms']);
+			$item->setStatus(self::EXCLUDED);
+			$item->setFailReason('shorter than the shortest video worth keeping');
+			$item->setProbeVersion(Probe::VERSION);
+			$item->setIndexedAt(time());
+			$this->mapper->update($item);
 			return false;
 		}
 
@@ -385,6 +475,7 @@ class Indexer {
 	public function processQueue(int $limit, ?string $userId = null, ?callable $onEach = null): array {
 		$done = 0;
 		$failed = 0;
+		$setAside = 0;
 		foreach ($this->mapper->pending($limit, $userId) as $item) {
 			$ok = false;
 			try {
@@ -393,12 +484,24 @@ class Indexer {
 				$this->logger->warning('Video Gallery could not inspect ' . $item->getPath() . ': ' . $e->getMessage(), ['exception' => $e]);
 				$this->fail($item, $e->getMessage());
 			}
-			$ok ? $done++ : $failed++;
+			if ($ok) {
+				$done++;
+			} elseif ($item->getStatus() === self::EXCLUDED) {
+				// Read perfectly well, and deliberately left out. Not a failure.
+				$setAside++;
+			} else {
+				$failed++;
+			}
 			if ($onEach !== null) {
 				$onEach($item, $ok);
 			}
 		}
-		return ['done' => $done, 'failed' => $failed, 'remaining' => count($this->mapper->pending(1, $userId))];
+		return [
+			'done' => $done,
+			'failed' => $failed,
+			'excluded' => $setAside,
+			'remaining' => count($this->mapper->pending(1, $userId)),
+		];
 	}
 
 	/** @return list<string> every account that has files to look at */

@@ -68,20 +68,27 @@ class Scan extends Command {
 
 		$done = 0;
 		$failed = 0;
-		while ($done + $failed < $limit) {
-			$batch = min(50, $limit - $done - $failed);
+		$excluded = 0;
+		while ($done + $failed + $excluded < $limit) {
+			$batch = min(50, $limit - $done - $failed - $excluded);
 			$result = $this->indexer->processQueue($batch, $user, static function ($item, $ok) use ($progress): void {
 				$progress->advance();
 			});
-			if ($result['done'] === 0 && $result['failed'] === 0) {
+			if ($result['done'] === 0 && $result['failed'] === 0 && ($result['excluded'] ?? 0) === 0) {
 				break;
 			}
 			$done += $result['done'];
 			$failed += $result['failed'];
+			$excluded += $result['excluded'] ?? 0;
 		}
 		$progress->finish();
 		$output->writeln('');
-		$output->writeln(sprintf('<info>Read %d files.</info>%s', $done, $failed > 0 ? ' <comment>' . $failed . ' could not be read.</comment>' : ''));
+		$output->writeln(sprintf(
+			'<info>Read %d files.</info>%s%s',
+			$done,
+			$excluded > 0 ? ' ' . $excluded . ' were set aside by the rules.' : '',
+			$failed > 0 ? ' <comment>' . $failed . ' could not be read.</comment>' : '',
+		));
 		return 0;
 	}
 }

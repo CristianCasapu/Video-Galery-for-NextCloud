@@ -17,6 +17,7 @@ use OCA\VideoGallery\Service\Indexer;
 use OCA\VideoGallery\Service\Janitor;
 use OCA\VideoGallery\Service\Paths;
 use OCA\VideoGallery\Service\PlaybackMemory;
+use OCA\VideoGallery\Service\Tuning;
 use OCP\AppFramework\Http\DataResponse;
 use OCP\AppFramework\OCSController;
 use OCP\IRequest;
@@ -30,6 +31,7 @@ class AdminController extends OCSController {
 		private Paths $paths,
 		private Janitor $janitor,
 		private PlaybackMemory $memory,
+		private Tuning $tuning,
 		private Indexer $indexer,
 		private ItemMapper $items,
 		private SessionMapper $sessions,
@@ -46,6 +48,35 @@ class AdminController extends OCSController {
 			'library' => $this->items->stats(),
 			'candidates' => $this->paths->candidates(),
 			'memory' => $this->memory->summary(30),
+			'devices' => $this->tuning->devices(),
+			'benchmark' => $this->tuning->benchmark(),
+		]);
+	}
+
+	/**
+	 * Measure this machine and set the numbers to what it proved it could do.
+	 *
+	 * Takes a minute or two: it encodes the same piece of video several ways and
+	 * keeps the times.
+	 */
+	public function autoTune(): DataResponse {
+		$result = $this->tuning->autoTune();
+		if (($result['extra_hw_frames'] ?? 0) > 0) {
+			$this->config->set('extra_hw_frames', (int)$result['extra_hw_frames']);
+		}
+		if (!empty($result['nvenc_preset'])) {
+			$this->config->set('nvenc_preset', (string)$result['nvenc_preset']);
+		}
+		if (array_key_exists('hw_decode', $result)) {
+			// Measured rather than assumed: on some machines keeping frames on
+			// the card is slower than copying them back.
+			$this->config->set('hw_decode', (bool)$result['hw_decode']);
+			$this->config->set('extra_hw_frames', (int)($result['extra_hw_frames'] ?? 0));
+		}
+		return new DataResponse([
+			'benchmark' => $result,
+			'settings' => $this->config->all(),
+			'devices' => $this->tuning->devices(),
 		]);
 	}
 

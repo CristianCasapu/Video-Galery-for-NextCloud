@@ -92,6 +92,12 @@ class Version1000Date20260910120000 extends SimpleMigrationStep {
 			// playlist describes, so their addresses change with them and nothing
 			// in between serves yesterday's quality from a cache.
 			$t->addColumn('generation', Types::INTEGER, ['notnull' => true, 'default' => 1]);
+			// Which graphics card this conversion was sent to, so a machine with
+			// several can spread the work and count what each is carrying.
+			$t->addColumn('device', Types::INTEGER, ['notnull' => true, 'default' => 0]);
+			// Set when the viewer arrived through a share link rather than an
+			// account: the session belongs to the link, and dies with it.
+			$t->addColumn('share_token', Types::STRING, ['notnull' => false, 'length' => 64]);
 			$t->addColumn('created_at', Types::BIGINT, ['notnull' => true, 'default' => 0]);
 			$t->addColumn('last_seen', Types::BIGINT, ['notnull' => true, 'default' => 0]);
 			$t->addColumn('error', Types::STRING, ['notnull' => false, 'length' => 1000]);
@@ -100,6 +106,7 @@ class Version1000Date20260910120000 extends SimpleMigrationStep {
 			$t->addIndex(['last_seen'], 'vgal_sess_seen');
 			$t->addIndex(['user_id'], 'vgal_sess_user');
 			$t->addIndex(['state'], 'vgal_sess_state');
+			$t->addIndex(['device'], 'vgal_sess_device');
 		}
 
 		if (!$schema->hasTable('videogallery_progress')) {

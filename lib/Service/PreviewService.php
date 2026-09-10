@@ -210,19 +210,22 @@ class PreviewService {
 			'-t', (string)$seconds,
 			'-i', $input,
 			'-an', '-sn', '-dn',
-			'-vf', $this->scaleFilter($height) . $this->rotateFilter($item) . ',fps=24',
+			'-vf', $this->scaleFilter($height) . $this->rotateFilter($item) . ',fps=' . $this->config->getInt('preview_fps'),
 		];
 		// Hardware encoding when it is there, but always software decoding: these
 		// are short clips and a decoder set up per clip costs more than it saves.
 		if ($family === 'nvenc') {
-			$args = array_merge($args, ['-c:v', 'h264_nvenc', '-preset', 'p4', '-cq', '30', '-profile:v', 'main']);
+			$args = array_merge($args, ['-c:v', 'h264_nvenc', '-preset', 'p4',
+				'-cq', (string)$this->config->getInt('preview_crf'), '-profile:v', 'main']);
 		} elseif ($family === 'vaapi') {
 			$args = array_merge($args, ['-vaapi_device', $this->config->getString('vaapi_device')]);
 			$args[count($args) - 3] = '-vf';
-			$args[count($args) - 2] = $this->scaleFilter($height) . $this->rotateFilter($item) . ',fps=24,format=nv12,hwupload';
+			$args[count($args) - 2] = $this->scaleFilter($height) . $this->rotateFilter($item)
+				. ',fps=' . $this->config->getInt('preview_fps') . ',format=nv12,hwupload';
 			$args = array_merge($args, ['-c:v', 'h264_vaapi']);
 		} else {
-			$args = array_merge($args, ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '30', '-profile:v', 'main', '-pix_fmt', 'yuv420p']);
+			$args = array_merge($args, ['-c:v', 'libx264', '-preset', 'veryfast',
+				'-crf', (string)$this->config->getInt('preview_crf'), '-profile:v', 'main', '-pix_fmt', 'yuv420p']);
 		}
 		$args = array_merge($args, [
 			'-movflags', '+faststart+frag_keyframe+empty_moov',
@@ -246,8 +249,9 @@ class PreviewService {
 			'-t', (string)$seconds,
 			'-i', $input,
 			'-an', '-sn', '-dn',
-			'-vf', $this->scaleFilter($height) . $this->rotateFilter($item) . ',fps=24',
-			'-c:v', 'libx264', '-preset', 'veryfast', '-crf', '30', '-profile:v', 'main', '-pix_fmt', 'yuv420p',
+			'-vf', $this->scaleFilter($height) . $this->rotateFilter($item) . ',fps=' . $this->config->getInt('preview_fps'),
+			'-c:v', 'libx264', '-preset', 'veryfast',
+			'-crf', (string)$this->config->getInt('preview_crf'), '-profile:v', 'main', '-pix_fmt', 'yuv420p',
 			'-movflags', '+faststart+frag_keyframe+empty_moov',
 			'-max_muxing_queue_size', '512',
 			$output,

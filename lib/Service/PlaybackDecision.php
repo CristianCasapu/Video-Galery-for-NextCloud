@@ -47,7 +47,7 @@ class PlaybackDecision {
 	 * @param list<string> $knownBad modes that have failed for this situation
 	 * @return array<string, mixed>
 	 */
-	public function decide(Item $item, array $client, float $bandwidthKbps = 0.0, string $requested = 'auto', ?array $remembered = null, array $knownBad = []): array {
+	public function decide(Item $item, array $client, float $bandwidthKbps = 0.0, string $requested = 'auto', ?array $remembered = null, array $knownBad = [], bool $allowOriginal = true): array {
 		$reasons = [];
 		$compatible = $this->checkCompatibility($item, $client, $reasons);
 
@@ -87,6 +87,15 @@ class PlaybackDecision {
 			if ($rung !== null) {
 				return $this->result(self::TRANSCODE, $rung['id'], $this->rungKbps($rung), [$rung['label'] . ' was chosen in the player.'], $compatible, $bandwidthKbps, $sourceKbps);
 			}
+		}
+
+		// Where the share says viewing only, the file itself is never handed
+		// over: it is repackaged into segments instead, which is watching rather
+		// than downloading. The picture and sound are untouched either way.
+		if (!$allowOriginal && $compatible['mode'] === self::DIRECT) {
+			$compatible['mode'] = self::REMUX;
+			$compatible['playable'] = false;
+			$reasons[] = 'This link allows watching but not downloading, so the file is streamed rather than sent.';
 		}
 
 		if ($compatible['playable'] && $fitsLink && $this->config->getBool('direct_play_enabled')) {
