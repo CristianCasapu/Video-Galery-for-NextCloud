@@ -27,11 +27,7 @@ class Transcoder {
 	private const THROTTLE_AHEAD_SECONDS = 90;
 	private const RESTART_DISTANCE_SEGMENTS = 3;
 
-	/**
-	 * Frames set aside on the graphics card beyond what the decoder needs for
-	 * itself, so the encoder can hold a run of them without starving it.
-	 */
-	private const EXTRA_HW_FRAMES = 16;
+
 
 	/**
 	 * Codecs MPEG-TS cannot carry. A file being copied through with any of these
@@ -420,17 +416,37 @@ class Transcoder {
 		if (!$this->ffmpeg->isHardware($session->getEncoder())) {
 			return null;
 		}
-		$marker = $session->getDir() . '/fell-back';
-		if (is_file($marker)) {
+		$reason = $this->lastError($session);
+		if (!$this->looksLikeHardwareFailure($reason)) {
 			return null;
 		}
-		if (!$this->looksLikeHardwareFailure($this->lastError($session))) {
+
+		// Give up the card a piece at a time rather than all at once. Decoding
+		// on it is the fragile half — how many frames a card will hold at once
+		// varies, and the ffmpeg build and the driver have to agree about it —
+		// while the encoder usually carries on working perfectly. Dropping only
+		// the decoding costs a fraction of the speed; dropping the whole card
+		// costs most of it.
+		$noDecode = $session->getDir() . '/no-gpu-decode';
+		if (!is_file($noDecode)) {
+			@file_put_contents($noDecode, $reason);
+			$this->logger->warning('Video Gallery could not decode on the graphics card, and is decoding on the processor instead: {reason}', ['reason' => $reason]);
+			$this->restartAfterFallback($session, $index);
+			$found = $this->waitForSegment($session, $index);
+			if ($found !== null) {
+				return $found;
+			}
+			$reason = $this->lastError($session);
+		}
+
+		$fellBack = $session->getDir() . '/fell-back';
+		if (is_file($fellBack)) {
 			return null;
 		}
-		@file_put_contents($marker, (string)time());
-		$this->logger->warning('Video Gallery could not use {encoder} from this process and is converting on the processor instead: {reason}', [
+		@file_put_contents($fellBack, (string)time());
+		$this->logger->warning('Video Gallery could not use {encoder} either, and is converting entirely on the processor: {reason}', [
 			'encoder' => $session->getEncoder(),
-			'reason' => $this->lastError($session),
+			'reason' => $reason,
 		]);
 		// Test the hardware again in this context, so the next viewer is not sent
 		// down the same dead end.
@@ -439,13 +455,17 @@ class Transcoder {
 		} catch (\Throwable) {
 			// The retry below matters more than the bookkeeping.
 		}
-
 		$session->setEncoder('software');
+		$this->restartAfterFallback($session, $index);
+		return $this->waitForSegment($session, $index);
+	}
+
+	private function restartAfterFallback(Session $session, int $index): void {
 		$session->setState(Session::STARTING);
 		$session->setError(null);
+		$session->setPid(0);
 		$this->sessions->update($session);
 		$this->start($session, $index);
-		return $this->waitForSegment($session, $index);
 	}
 
 	/** Whether an encoder's complaint is about the hardware rather than the file. */
@@ -543,19 +563,31 @@ class Transcoder {
 		$videoKbps = (int)($rung['bitrate'] ?? 0);
 		$fullTranscode = $mode === PlaybackDecision::TRANSCODE;
 		$size = $this->targetSize($session, (int)($rung['height'] ?? 0));
-		$hwDecode = $this->config->getBool('hw_decode') && $fullTranscode;
+		// Decoding on the card is used only where it has been shown to work, and
+		// never for a video shot sideways: applying a rotation is a filter that
+		// only works on frames in main memory, and there is no step in the
+		// graphics pipeline to match it.
+		$onCard = $fullTranscode
+			&& $this->config->getBool('hw_decode')
+			&& $this->ffmpeg->canDecodeOnCard()
+			&& !$this->hasRotation($session)
+			&& !is_file($session->getDir() . '/no-gpu-decode');
+		$hwDecode = $onCard;
 
 		$args = [$binary, '-hide_banner', '-loglevel', 'warning', '-nostdin', '-y'];
 
 		// Hardware decoding, where the encoder takes the frames directly and they
 		// never have to come back to main memory.
 		if ($hwDecode && $family === 'nvenc') {
-			$args = array_merge($args, ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda']);
+			$args = array_merge($args, ['-hwaccel', 'cuda']);
+			if ($onCard) {
+				$args = array_merge($args, ['-hwaccel_output_format', 'cuda']);
+			}
 			// Frames stay on the card, and the encoder holds on to a good many of
 			// them at once for its lookahead and its B-frames. Without room set
 			// aside for that, the decoder runs out of surfaces part way through
 			// and the whole conversion collapses with "No decoder surfaces left".
-			$args = array_merge($args, ['-extra_hw_frames', (string)self::EXTRA_HW_FRAMES]);
+			$args = array_merge($args, ['-extra_hw_frames', (string)FFmpeg::EXTRA_HW_FRAMES]);
 			if ($this->config->getInt('nvenc_device') > 0) {
 				$args = array_merge($args, ['-hwaccel_device', (string)$this->config->getInt('nvenc_device')]);
 			}
@@ -563,12 +595,16 @@ class Transcoder {
 			$args = array_merge($args, [
 				'-hwaccel', 'vaapi',
 				'-hwaccel_device', $this->config->getString('vaapi_device'),
-				'-hwaccel_output_format', 'vaapi',
-				'-extra_hw_frames', (string)self::EXTRA_HW_FRAMES,
+				'-extra_hw_frames', (string)FFmpeg::EXTRA_HW_FRAMES,
 			]);
+			if ($onCard) {
+				$args = array_merge($args, ['-hwaccel_output_format', 'vaapi']);
+			}
 		} elseif ($hwDecode && $family === 'qsv') {
-			$args = array_merge($args, ['-hwaccel', 'qsv', '-hwaccel_output_format', 'qsv',
-				'-extra_hw_frames', (string)self::EXTRA_HW_FRAMES]);
+			$args = array_merge($args, ['-hwaccel', 'qsv', '-extra_hw_frames', (string)FFmpeg::EXTRA_HW_FRAMES]);
+			if ($onCard) {
+				$args = array_merge($args, ['-hwaccel_output_format', 'qsv']);
+			}
 		}
 
 		// Only a re-encode is ever started part way in. A copied stream runs once,
@@ -592,7 +628,7 @@ class Transcoder {
 		$args = array_merge($args, ['-sn', '-dn', '-map_chapters', '-1']);
 
 		if ($fullTranscode) {
-			$args = array_merge($args, $this->videoArgs($family, $size, $videoKbps, $segmentDuration, $hwDecode));
+			$args = array_merge($args, $this->videoArgs($family, $size, $videoKbps, $segmentDuration, $onCard));
 		} else {
 			$args = array_merge($args, ['-c:v', 'copy']);
 		}
@@ -652,10 +688,10 @@ class Transcoder {
 			// Nothing to reason from; scale by height and keep the aspect ratio.
 			return ['width' => -2, 'height' => $rungHeight];
 		}
-		// Rotation is applied by the encoder after scaling, so the size worked out
-		// here is in the frame's own orientation, not the one it is shown in.
-		$width = $item->getWidth();
-		$height = $item->getHeight();
+		// Rotation is applied before any filter of ours runs, so these are the
+		// dimensions the frame will already have by the time it is scaled.
+		$width = $item->displayWidth();
+		$height = $item->displayHeight();
 		$shortSide = min($width, $height);
 		if ($shortSide <= $rungHeight) {
 			return null;
@@ -667,6 +703,12 @@ class Transcoder {
 		];
 	}
 
+	/** Whether this file is one shot sideways. */
+	private function hasRotation(Session $session): bool {
+		$item = $this->items->find($session->getUserId(), $session->getFileId());
+		return $item !== null && $item->getRotation() !== 0;
+	}
+
 	/** H.264 requires even dimensions. */
 	private function even(int $value): int {
 		return max(2, $value - ($value % 2));
@@ -676,7 +718,7 @@ class Transcoder {
 	 * @param array{width: int, height: int}|null $size null to leave the picture at its own size
 	 * @return list<string>
 	 */
-	private function videoArgs(string $family, ?array $size, int $videoKbps, int $segmentDuration, bool $hwDecode): array {
+	private function videoArgs(string $family, ?array $size, int $videoKbps, int $segmentDuration, bool $onCard): array {
 		$maxrate = (int)round($videoKbps * 1.5);
 		$bufsize = (int)round($videoKbps * 3);
 		// A keyframe exactly on every segment boundary is what lets a segment
@@ -686,14 +728,20 @@ class Transcoder {
 
 		return match ($family) {
 			'nvenc' => array_merge(
-				$dimensions !== '' ? ['-vf', ($hwDecode ? 'scale_cuda' : 'scale') . '=' . $dimensions] : [],
+				$dimensions !== '' ? ['-vf', ($onCard ? 'scale_cuda' : 'scale') . '=' . $dimensions] : [],
 				['-c:v', 'h264_nvenc', '-preset', $this->config->getString('nvenc_preset'), '-tune', 'hq',
-					'-rc', 'vbr', '-cq', '23', '-profile:v', 'high', '-rc-lookahead', '20', '-bf', '3'],
+					'-rc', 'vbr', '-cq', '23', '-profile:v', 'high'],
+				// Looking ahead lets the encoder spend its bits more wisely, and
+				// it pays for that by holding twenty frames at once. When the
+				// decoder is on the same card those frames come out of the same
+				// small pool, and it starves — so the lookahead is kept only
+				// where the frames are in main memory and cost nothing to hold.
+				$onCard ? ['-bf', '2'] : ['-rc-lookahead', '20', '-bf', '3'],
 				$videoKbps > 0 ? ['-b:v', $videoKbps . 'k', '-maxrate', $maxrate . 'k', '-bufsize', $bufsize . 'k'] : [],
 				$keyframes,
 			),
 			'vaapi' => array_merge(
-				['-vf', ($hwDecode ? '' : 'format=nv12,hwupload,') . ($dimensions !== '' ? 'scale_vaapi=' . $dimensions : 'scale_vaapi')],
+				['-vf', ($onCard ? '' : 'format=nv12,hwupload,') . ($dimensions !== '' ? 'scale_vaapi=' . $dimensions : 'scale_vaapi')],
 				['-c:v', 'h264_vaapi', '-profile:v', 'high'],
 				$videoKbps > 0 ? ['-b:v', $videoKbps . 'k', '-maxrate', $maxrate . 'k'] : [],
 				$keyframes,

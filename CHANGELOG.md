@@ -38,8 +38,13 @@ First release.
 - The encoder is paused once it is far enough ahead of the viewer, and started
   again when they catch up, so an abandoned film is not converted in full
 - Hardware conversion on NVENC, Quick Sync, VA-API or VideoToolbox, chosen by
-  testing each one rather than by reading build flags, with software as the
-  fallback — including at runtime, if the card turns out to be unreachable
+  testing each one rather than by reading build flags
+- Decoding on the card is tested separately from encoding on it, because the
+  answers differ, and a conversion that hits trouble gives up the decoder first
+  and the encoder only if it must
+- Video shot sideways is turned the right way up before it is scaled, which
+  means its frames come back from the card, since rotation has no equivalent
+  in the graphics pipeline
 
 ### The connection
 
@@ -91,4 +96,4 @@ First release.
 - `occ videogallery:selftest` converts part of a real file, seeks into it, checks
   the result plays, and confirms nothing was left behind
 
-[1.0.0]: https://github.com/CristianCasapu/Video-Galery-for-NextCloud/releases/tag/v1.0.0
+[1.0.0]: https://github.com/CristianCasapu/Video-Galery-for-NextCloud/releases/latest

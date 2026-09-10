@@ -103,6 +103,13 @@ processor cores per stream, so on a machine with a graphics card it is worth
 getting the card involved. The app tests NVENC, Quick Sync, VA-API and
 VideoToolbox on startup and uses the best one that actually works.
 
+Encoding on a card and decoding on it are separate questions, and the answer is
+often different — a machine can encode perfectly and refuse to decode a frame,
+usually because the ffmpeg build and the installed driver disagree about how
+many frames may be held on the card at once. Both are tested separately, and if
+decoding fails during a conversion the app gives up that half and keeps the
+encoder, which costs a fraction of the speed rather than most of it.
+
 Two things commonly stop a card being used, and both are about permission rather
 than hardware:
 

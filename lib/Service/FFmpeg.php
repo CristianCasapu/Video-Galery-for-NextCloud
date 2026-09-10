@@ -27,6 +27,16 @@ class FFmpeg {
 		'/usr/lib/jellyfin-ffmpeg', '/opt/homebrew/bin',
 	];
 
+	/**
+	 * Frames set aside on the graphics card beyond what the decoder needs, so
+	 * the encoder can hold a run of them without starving it.
+	 *
+	 * Small on purpose, and the same figure the converter uses. Cards differ in
+	 * how many surfaces they will allow at once: too few and decoding stops with
+	 * "No decoder surfaces left", too many and it will not start at all.
+	 */
+	public const EXTRA_HW_FRAMES = 4;
+
 	/** Encoders we know how to drive, in the order we would rather have them. */
 	public const ENCODERS = [
 		'nvenc' => ['encoder' => 'h264_nvenc', 'label' => 'NVIDIA NVENC', 'hw' => true],
@@ -291,7 +301,15 @@ class FFmpeg {
 			}
 		}
 		$caps['hevc_nvenc'] = in_array('hevc_nvenc', $caps['encoders'], true) && isset($caps['available']['nvenc']);
-		$caps['nvdec'] = in_array('cuda', $caps['hwaccels'], true) && isset($caps['available']['nvenc']);
+		// Decoding on the card is a separate question from encoding on it, and
+		// the answer is often different. This build and this driver may encode
+		// happily and refuse to decode a single frame.
+		$decode = $this->decodeTest($caps['best']);
+		$caps['hw_decode'] = $decode['ok'];
+		$caps['hw_decode_error'] = $decode['error'];
+		if (!$decode['ok'] && $decode['error'] !== '' && $this->isHardware((string)$caps['best'])) {
+			$caps['notes'][] = 'Decoding on the graphics card did not work, so files will be decoded by the processor and encoded on the card: ' . $decode['error'];
+		}
 		$caps['context'] = $this->context();
 		$caps['gpu'] = $this->gpuVisibility();
 		return $caps;
@@ -332,6 +350,70 @@ class FFmpeg {
 			$error = $result['timedOut'] ? 'timed out' : 'exit code ' . $result['code'];
 		}
 		return ['ok' => false, 'error' => $this->firstLine($error), 'ms' => $ms];
+	}
+
+	/**
+	 * Try decoding something on the card and scaling it there.
+	 *
+	 * Encoding and decoding are separate pieces of silicon with separate driver
+	 * paths, and a machine that encodes perfectly can fail to decode at all —
+	 * usually a version gap between the ffmpeg build and the installed driver.
+	 * The failure is not graceful either: with the frames meant to stay on the
+	 * card, a decoder that will not start takes the whole filter chain down with
+	 * it. So it is tried here, once, on a file made for the purpose.
+	 *
+	 * @return array{ok: bool, error: string}
+	 */
+	public function decodeTest(string $family): array {
+		$binary = $this->ffmpeg();
+		if ($binary === null || !$this->isHardware($family)) {
+			return ['ok' => false, 'error' => ''];
+		}
+		$sample = sys_get_temp_dir() . '/videogallery-decode-' . bin2hex(random_bytes(4)) . '.mp4';
+		try {
+			// Something real to decode: a second of H.264, the format nearly
+			// every file in a library will be or will become.
+			$made = $this->run([
+				$binary, '-hide_banner', '-loglevel', 'error', '-y',
+				// A realistic size: the surface budget a card can spare depends on
+				// the picture, and a postage stamp proves nothing about a film.
+				'-f', 'lavfi', '-i', 'testsrc=size=1280x720:rate=25', '-t', '2',
+				'-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', $sample,
+			], 60);
+			if ($made['code'] !== 0 || !is_file($sample)) {
+				return ['ok' => false, 'error' => 'could not make a sample to decode'];
+			}
+
+			$args = match ($family) {
+				'nvenc' => [$binary, '-hide_banner', '-loglevel', 'error', '-y',
+					'-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda',
+					'-extra_hw_frames', (string)self::EXTRA_HW_FRAMES, '-i', $sample,
+					'-vf', 'scale_cuda=320:240', '-c:v', 'h264_nvenc', '-f', 'null', '-'],
+				'vaapi' => [$binary, '-hide_banner', '-loglevel', 'error', '-y',
+					'-hwaccel', 'vaapi', '-hwaccel_device', $this->config->getString('vaapi_device'),
+					'-hwaccel_output_format', 'vaapi', '-i', $sample,
+					'-vf', 'scale_vaapi=320:240', '-c:v', 'h264_vaapi', '-f', 'null', '-'],
+				'qsv' => [$binary, '-hide_banner', '-loglevel', 'error', '-y',
+					'-hwaccel', 'qsv', '-hwaccel_output_format', 'qsv', '-i', $sample,
+					'-vf', 'scale_qsv=320:240', '-c:v', 'h264_qsv', '-f', 'null', '-'],
+				default => null,
+			};
+			if ($args === null) {
+				return ['ok' => false, 'error' => ''];
+			}
+			$result = $this->run($args, 60);
+			if ($result['code'] === 0) {
+				return ['ok' => true, 'error' => ''];
+			}
+			return ['ok' => false, 'error' => $this->firstLine(trim($result['err']) ?: 'exit code ' . $result['code'])];
+		} finally {
+			@unlink($sample);
+		}
+	}
+
+	/** Whether frames can be decoded and kept on the card here. */
+	public function canDecodeOnCard(): bool {
+		return (bool)($this->capabilities()['hw_decode'] ?? false);
 	}
 
 	/** The encoder family to actually use, honouring the setting but never picking a broken one. */
