@@ -1,0 +1,8 @@
+/node_modules/
+/vendor/
+/build/
+/screenshots/*.tmp
+*.log
+
+# Build maps: useful while developing, dead weight in an install
+*.map

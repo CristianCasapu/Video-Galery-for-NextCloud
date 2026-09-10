@@ -1,0 +1,2 @@
+*.mjs   -diff linguist-generated
+*.map   -diff linguist-generated
