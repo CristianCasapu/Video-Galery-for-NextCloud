@@ -5,6 +5,15 @@ All notable changes to Video Gallery are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] — 2026-09-11
+
+- **PHP 8.4 is now the minimum.** The app already used syntax that nothing older
+  understands, and asking for 8.1 while writing for 8.4 only meant a server below
+  it would install the app and then fail somewhere unhelpful. It now says what it
+  needs and refuses politely on anything older
+- The build checks against 8.4 alone, and fails if the version it checks stops
+  matching the version the app asks for
+
 ## [1.3.0] — 2026-09-11
 
 The library is arranged by the folders it is kept in, and what those folders
@@ -228,3 +237,4 @@ First release.
 
 [1.1.0]: https://github.com/CristianCasapu/Video-Galery-for-NextCloud/releases/latest
 [1.0.0]: https://github.com/CristianCasapu/Video-Galery-for-NextCloud/releases/latest
+[1.3.1]: https://github.com/CristianCasapu/Video-Galery-for-NextCloud/releases/latest

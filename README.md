@@ -114,7 +114,7 @@ The release file has no version in its name, so the same command upgrades it.
 
 ## What it needs
 
-**ffmpeg.** That is the whole list. The app finds it by itself in the usual
+**PHP 8.4 or newer, and ffmpeg.** That is the whole list. The app finds it by itself in the usual
 places, works out what this machine can really do with it — by encoding a frame
 and seeing whether it worked, not by reading build flags — chooses a scratch
 directory, creates it, and starts.
@@ -124,6 +124,9 @@ sudo apt install ffmpeg      # Debian, Ubuntu
 sudo dnf install ffmpeg      # Fedora, RHEL
 sudo apk add ffmpeg          # Alpine
 ```
+
+Nextcloud itself still runs on older PHP, so this app will refuse to enable on a
+server below 8.4 rather than half working on it.
 
 Everything else it can arrange or do without. If something is missing or
 unreachable, the settings page says so in a sentence and gives the command that

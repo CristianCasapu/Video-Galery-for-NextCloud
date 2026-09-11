@@ -24,7 +24,9 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        php: ['8.1', '8.2', '8.3', '8.4']
+        # The app asks for PHP 8.4, so that is what it is checked against.
+        # Nothing here is written for anything older on purpose.
+        php: ['8.4']
     steps:
       - uses: actions/checkout@v4
       - uses: shivammathur/setup-php@v2
@@ -32,3 +34,10 @@ jobs:
           php-version: ${{ matrix.php }}
       - name: Check every file parses
         run: find lib appinfo templates -name '*.php' -print0 | xargs -0 -n1 php -l
+      - name: Check the declared minimum matches what is asked for
+        run: |
+          declared=$(grep -oP '<php min-version="\K[^"]+' appinfo/info.xml)
+          if [ "$declared" != "${{ matrix.php }}" ]; then
+            echo "info.xml asks for PHP $declared but this job runs ${{ matrix.php }}"
+            exit 1
+          fi
