@@ -5,7 +5,50 @@ All notable changes to Video Gallery are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.1.0] — 2026-09-11
+## [1.2.0] — 2026-09-11
+
+### Fixed
+
+- **The player now covers the page.** It was drawn underneath Nextcloud's own
+  header, which put the header's logo on top of the close button — so closing a
+  video navigated away from the app instead. The player is moved out to the page
+  body, and the rest of the page is hidden for as long as something is playing.
+- **The library fills the window and scrolls.** Nextcloud hands an app a flex row
+  with the overflow clipped and expects it to claim its room and scroll itself;
+  without that the app was squeezed to the width of its widest child and its
+  overflow simply disappeared.
+- **The timeline is one continuous grid.** A day with three videos in it left
+  most of a row empty and the page looked half used. The dates now sit across
+  the full width as dividers and the videos flow on past them.
+- **Reloading keeps you where you were.** The view, the search and the folder are
+  in the address, so the timeline stays the timeline after a refresh.
+- **Only two previews are made at once.** Opening the library asked for every
+  visible picture in the same second, and each one that was missing started an
+  encoder — forty cards meant forty encoders, which is how a server with nobody
+  watching anything came to be at full load. Requests that find every place taken
+  are turned away and come back a moment later.
+- Bitrates under a megabit read as "0.0 Mbit/s"; they now read in kbit/s.
+- Icons sat a pixel or two above and left of centre in their buttons, an inline
+  SVG being placed on the text baseline.
+- The page a share link opens sat in a narrow column with the sign-in wallpaper
+  showing beside it.
+
+### Added
+
+- **Back**, where the close button used to be, and the browser's own back button
+  and back gesture close the player too
+- **Show where this file is**, from the player and the details panel
+- **Edit details**: a title, a description and the date it was recorded. Kept
+  beside the file rather than inside it, so reading the file again never undoes
+  it; the file itself is touched only if you ask for it to be renamed
+- Short links appear by themselves in the share dialog rather than waiting to be
+  asked for, with the long address underneath
+- Scrolling to the end of a list loads the next page before you reach it
+- Every page and every dialog laid out for phones and tablets as well as desktops:
+  dialogs become sheets, controls grow where there are fingers rather than a
+  pointer, and grids reflow rather than squash
+
+
 
 ### Sharing
 

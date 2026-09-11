@@ -108,12 +108,16 @@
 							{{ t('videogallery', 'The file itself will not be sent, and no link to an outside player is offered. Watching still works, because a stream is not a copy — though anything that can be watched can be recorded.') }}
 						</p>
 
-						<button v-if="state.shortLinks && !share.shortUrl" class="share__short" @click="makeShort(share)">
-							{{ t('videogallery', 'Make a short link') }}
+						<div v-if="share.shortUrl" class="share__long">
+							<span class="share__long-label">{{ t('videogallery', 'Long address') }}</span>
+							<input type="text" readonly :value="share.url || ''" @focus="($event.target as HTMLInputElement).select()">
+							<button @click="copy(share.url || '')">
+								{{ copied === share.url ? t('videogallery', 'Copied') : t('videogallery', 'Copy') }}
+							</button>
+						</div>
+						<button v-else-if="state.shortLinks" class="share__short" :disabled="shortening === share.id" @click="makeShort(share)">
+							{{ shortening === share.id ? t('videogallery', 'Shortening…') : t('videogallery', 'Make a short link') }}
 						</button>
-						<p v-if="share.shortUrl" class="share__hint share__hint--small">
-							{{ t('videogallery', 'Long address: {url}', { url: share.url || '' }) }}
-						</p>
 					</div>
 				</section>
 
@@ -147,6 +151,7 @@ const problem = ref('')
 const search = ref('')
 const matches = ref<Array<{ id: string, label: string, type: number }>>([])
 const copied = ref('')
+const shortening = ref('')
 let searchTimer: number | undefined
 
 const isFolder = computed(() => props.isFolder ?? state.value?.isFolder ?? false)
@@ -158,11 +163,38 @@ async function load(): Promise<void> {
 	loading.value = true
 	try {
 		state.value = await fetchShares(props.fileId)
+		await fillInShortLinks()
 	} catch {
 		problem.value = t('videogallery', 'What is already shared could not be read.')
 	} finally {
 		loading.value = false
 	}
+}
+
+/**
+ * Give every link its short address without being asked.
+ *
+ * A short link that has to be requested is a short link nobody uses. The
+ * addresses are what this dialog exists to hand over, so both are put in front
+ * of the person straight away — the short one first, since that is the one that
+ * can be read out loud.
+ */
+async function fillInShortLinks(): Promise<void> {
+	if (!state.value?.shortLinks) {
+		return
+	}
+	await Promise.all(state.value.shares
+		.filter((share) => share.type === 3 || share.type === 4)
+		.map(async (share) => {
+			try {
+				const result = await shortLink(share.id)
+				if (result.short) {
+					share.shortUrl = result.short
+				}
+			} catch {
+				// The short links app may be unwilling; the long address stands.
+			}
+		}))
 }
 
 function onSearch(): void {
@@ -222,6 +254,7 @@ async function remove(share: GalleryShare): Promise<void> {
 }
 
 async function makeShort(share: GalleryShare): Promise<void> {
+	shortening.value = share.id
 	try {
 		const result = await shortLink(share.id)
 		if (result.short) {
@@ -229,6 +262,8 @@ async function makeShort(share: GalleryShare): Promise<void> {
 		}
 	} catch {
 		problem.value = t('videogallery', 'A short link could not be made.')
+	} finally {
+		shortening.value = ''
 	}
 }
 
@@ -300,6 +335,12 @@ onMounted(load)
 	font-size: 13px;
 	color: #99a0a8;
 	word-break: break-word;
+}
+
+.share__panel svg {
+	/* An inline SVG sits on the text baseline, which leaves it a pixel or two
+	   high and left of the middle of any box it is centred in. */
+	display: block;
 }
 
 .share__close,
@@ -508,10 +549,113 @@ onMounted(load)
 	white-space: nowrap;
 }
 
+.share__long {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-top: 8px;
+}
+
+.share__long-label {
+	font-size: 11px;
+	color: #8d949d;
+	white-space: nowrap;
+}
+
+.share__long input {
+	flex: 1;
+	min-width: 0;
+	padding: 6px 9px;
+	border: 1px solid rgb(255 255 255 / 12%);
+	border-radius: 7px;
+	background: rgb(0 0 0 / 30%);
+	color: #99a0a8;
+	font-size: 11px;
+}
+
+.share__long button {
+	padding: 6px 11px;
+	border: 1px solid rgb(255 255 255 / 14%);
+	border-radius: 7px;
+	background: transparent;
+	color: #cfd3d8;
+	font-size: 11px;
+	cursor: pointer;
+}
+
 .share__options {
 	display: flex;
 	flex-wrap: wrap;
 	gap: 8px 16px;
 	margin-top: 10px;
+}
+
+/*
+ * On a phone a dialog in the middle of the screen is a small window into a
+ * form; it works far better as a sheet that comes up from the bottom and uses
+ * the whole width, with room enough to hit things with a thumb.
+ */
+@media (max-width: 600px) {
+	.share {
+		padding: 0;
+		place-items: end stretch;
+	}
+
+	.share__panel {
+		width: 100%;
+		max-height: 92vh;
+		border-radius: 16px 16px 0 0;
+		padding: 18px 16px calc(18px + env(safe-area-inset-bottom));
+	}
+
+	.share__row {
+		flex-wrap: wrap;
+		row-gap: 6px;
+	}
+
+	.share__who {
+		flex: 1 0 100%;
+	}
+
+	.share__link-row {
+		flex-wrap: wrap;
+	}
+
+	.share__link-row input {
+		flex: 1 0 100%;
+	}
+
+	.share__long {
+		flex-wrap: wrap;
+	}
+
+	.share__long input {
+		flex: 1 0 100%;
+	}
+
+	.share__options {
+		flex-direction: column;
+		gap: 10px;
+	}
+
+	/* Comfortably hittable without aiming. */
+	.share__close,
+	.share__remove {
+		width: 44px;
+		height: 44px;
+		flex-basis: 44px;
+	}
+
+	.share__link-row button,
+	.share__add,
+	.share__short {
+		min-height: 44px;
+	}
+}
+
+@media (min-width: 601px) and (max-width: 1024px) {
+	.share__panel {
+		width: min(620px, 94vw);
+	}
 }
 </style>

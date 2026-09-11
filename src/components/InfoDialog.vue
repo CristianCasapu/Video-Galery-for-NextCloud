@@ -11,6 +11,7 @@
 			<div class="info__body">
 				<h2 class="info__title">{{ item.basename }}</h2>
 				<p class="info__path">{{ item.path }}</p>
+				<p v-if="item.description" class="info__description">{{ item.description }}</p>
 
 				<div class="info__actions">
 					<button class="info__play" @click="$emit('play', item)">
@@ -20,6 +21,7 @@
 						{{ t('videogallery', 'Play') }}
 					</button>
 					<button class="info__link" @click="$emit('share', item)">{{ t('videogallery', 'Share') }}</button>
+					<button class="info__link" @click="$emit('edit', item)">{{ t('videogallery', 'Edit details') }}</button>
 					<a class="info__link" :href="filesUrl">{{ t('videogallery', 'Show in Files') }}</a>
 				</div>
 
@@ -48,7 +50,12 @@ import { posterUrl } from '../api'
 import type { VideoItem } from '../types'
 
 const props = defineProps<{ item: VideoItem }>()
-defineEmits<{ close: [], play: [item: VideoItem], share: [item: VideoItem] }>()
+defineEmits<{
+	close: []
+	play: [item: VideoItem]
+	share: [item: VideoItem]
+	edit: [item: VideoItem]
+}>()
 
 const poster = computed(() => posterUrl(props.item.fileId))
 const filesUrl = computed(() => generateUrl('/f/{fileId}', { fileId: props.item.fileId }))
@@ -62,6 +69,28 @@ function bytes(size: number): string {
 		index++
 	}
 	return `${value.toFixed(1)} ${units[index]}`
+}
+
+/**
+ * What the file actually runs at.
+ *
+ * Matroska and a few other containers carry no overall figure, and older
+ * entries in the library were indexed before one was worked out for them. The
+ * size and the length always give the answer, so they are used when the file
+ * itself is silent.
+ */
+function effectiveBitrate(item: VideoItem): number {
+	if (item.bitrate > 0) {
+		return item.bitrate
+	}
+	return item.duration > 0 && item.size > 0 ? (item.size * 8) / item.duration : 0
+}
+
+/** A screencast runs at a few hundred kbit/s; "0.0 Mbit/s" tells nobody that. */
+function formatBitrate(bitsPerSecond: number): string {
+	return bitsPerSecond >= 1000000
+		? `${(bitsPerSecond / 1000000).toFixed(1)} Mbit/s`
+		: `${Math.round(bitsPerSecond / 1000)} kbit/s`
 }
 
 function clock(seconds: number): string {
@@ -102,8 +131,9 @@ const facts = computed(() => {
 		})
 	}
 	rows.push({ label: t('videogallery', 'Container'), value: item.container.toUpperCase() })
-	if (item.bitrate) {
-		rows.push({ label: t('videogallery', 'Bitrate'), value: `${(item.bitrate / 1000000).toFixed(1)} Mbit/s` })
+	const bitrate = effectiveBitrate(item)
+	if (bitrate > 0) {
+		rows.push({ label: t('videogallery', 'Bitrate'), value: formatBitrate(bitrate) })
 	}
 	if (item.audioTracks.length > 1) {
 		rows.push({ label: t('videogallery', 'Sound tracks'), value: String(item.audioTracks.length) })
@@ -167,6 +197,14 @@ const facts = computed(() => {
 	font-size: 12px;
 	color: #868d95;
 	word-break: break-all;
+}
+
+.info__description {
+	margin: -10px 0 16px;
+	font-size: 14px;
+	line-height: 1.55;
+	color: #cfd3d8;
+	white-space: pre-wrap;
 }
 
 .info__actions {
@@ -249,5 +287,51 @@ const facts = computed(() => {
 	background: rgb(0 0 0 / 62%);
 	color: #fff;
 	cursor: pointer;
+}
+
+@media (max-width: 600px) {
+	.info {
+		padding: 0;
+		place-items: end stretch;
+	}
+
+	.info__panel {
+		max-height: 94vh;
+		border-radius: 16px 16px 0 0;
+	}
+
+	.info__art,
+	.info__wash {
+		height: 180px;
+	}
+
+	.info__body {
+		padding: 16px 16px calc(20px + env(safe-area-inset-bottom));
+	}
+
+	.info__title {
+		font-size: 19px;
+	}
+
+	.info__actions {
+		flex-wrap: wrap;
+	}
+
+	.info__play,
+	.info__link {
+		flex: 1 1 auto;
+		justify-content: center;
+		min-height: 44px;
+		text-align: center;
+	}
+
+	.info__facts {
+		grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+	}
+
+	.info__close {
+		width: 40px;
+		height: 40px;
+	}
 }
 </style>

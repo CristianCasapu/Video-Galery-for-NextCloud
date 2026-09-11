@@ -57,6 +57,7 @@ return [
 		['name' => 'api#items', 'url' => '/api/v1/items', 'verb' => 'GET'],
 		['name' => 'api#rails', 'url' => '/api/v1/rails', 'verb' => 'GET'],
 		['name' => 'api#item', 'url' => '/api/v1/items/{fileId}', 'verb' => 'GET'],
+		['name' => 'api#setMetadata', 'url' => '/api/v1/items/{fileId}/metadata', 'verb' => 'PUT'],
 		['name' => 'api#folders', 'url' => '/api/v1/folders', 'verb' => 'GET'],
 		['name' => 'api#setProgress', 'url' => '/api/v1/progress/{fileId}', 'verb' => 'PUT'],
 		['name' => 'api#deleteProgress', 'url' => '/api/v1/progress/{fileId}', 'verb' => 'DELETE'],

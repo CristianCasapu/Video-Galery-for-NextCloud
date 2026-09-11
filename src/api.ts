@@ -64,6 +64,18 @@ export async function saveProgress(fileId: number, payload: {
 	await axios.put(ocs('progress/{fileId}', { fileId }), payload)
 }
 
+/** Correct what the library says about a video. */
+export async function saveMetadata(fileId: number, payload: {
+	title?: string
+	description?: string
+	takenAt?: number
+	rename?: boolean
+	resetDate?: boolean
+}): Promise<{ item: VideoItem }> {
+	const { data } = await axios.put(ocs('items/{fileId}/metadata', { fileId }), payload)
+	return data.ocs.data
+}
+
 export async function clearProgress(fileId: number): Promise<void> {
 	await axios.delete(ocs('progress/{fileId}', { fileId }))
 }

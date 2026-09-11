@@ -64,6 +64,12 @@ use OCP\AppFramework\Db\Entity;
  * @method void setSubTracks(?string $subTracks)
  * @method string|null getChapters()
  * @method void setChapters(?string $chapters)
+ * @method string|null getCustomTitle()
+ * @method void setCustomTitle(?string $customTitle)
+ * @method string|null getDescription()
+ * @method void setDescription(?string $description)
+ * @method int getDateLocked()
+ * @method void setDateLocked(int $dateLocked)
  * @method string getPlayMode()
  * @method void setPlayMode(string $playMode)
  * @method string getStatus()
@@ -110,6 +116,9 @@ class Item extends Entity implements \JsonSerializable {
 	protected ?string $audioTracks = null;
 	protected ?string $subTracks = null;
 	protected ?string $chapters = null;
+	protected ?string $customTitle = null;
+	protected ?string $description = null;
+	protected int $dateLocked = 0;
 	protected string $playMode = '';
 	protected string $status = 'pending';
 	protected ?string $failReason = null;
@@ -135,6 +144,7 @@ class Item extends Entity implements \JsonSerializable {
 		$this->addType('probeVersion', 'integer');
 		$this->addType('indexedAt', 'integer');
 		$this->addType('assets', 'integer');
+		$this->addType('dateLocked', 'integer');
 	}
 
 	/** @return list<array<string, mixed>> */
@@ -153,6 +163,12 @@ class Item extends Entity implements \JsonSerializable {
 	public function chapterList(): array {
 		$decoded = json_decode((string)$this->chapters, true);
 		return is_array($decoded) ? $decoded : [];
+	}
+
+	/** The name to show, which is not always the name on disk. */
+	public function displayTitle(): string {
+		$custom = trim((string)$this->customTitle);
+		return $custom !== '' ? $custom : pathinfo($this->name, PATHINFO_FILENAME);
 	}
 
 	public function hasAsset(int $flag): bool {
@@ -174,7 +190,13 @@ class Item extends Entity implements \JsonSerializable {
 			'fileId' => $this->fileId,
 			'path' => $this->path,
 			'name' => $this->name,
-			'basename' => pathinfo($this->name, PATHINFO_FILENAME),
+			// What to call it: what somebody wrote, or failing that the file name
+			// with its extension taken off.
+			'basename' => $this->displayTitle(),
+			'fileName' => $this->name,
+			'customTitle' => $this->customTitle,
+			'description' => (string)$this->description,
+			'dateLocked' => $this->dateLocked === 1,
 			'folder' => trim(dirname($this->path), '.'),
 			'mimetype' => $this->mimetype,
 			'size' => $this->size,

@@ -143,9 +143,49 @@ function play(item: VideoItem): void {
 onMounted(load)
 </script>
 
+<!--
+  - The public layout hands an app a flex row with the overflow clipped, exactly
+  - as the signed-in one does, and expects it to claim its room and scroll
+  - itself. Without that the page sits in a narrow column with the guest
+  - wallpaper showing beside it.
+  -->
+<style>
+#videogallery-public {
+	flex: 1 1 auto;
+	min-width: 0;
+	width: 100%;
+	height: 100%;
+	overflow: hidden;
+	display: flex;
+	flex-direction: column;
+}
+
+/* The page behind is a sign-in page by default, wallpaper and all. */
+body.videogallery-public-page {
+	background: #0c0d10 !important;
+	background-image: none !important;
+}
+
+body.videogallery-public-page #content {
+	margin: 0;
+	width: 100%;
+	height: 100%;
+	max-width: none;
+	border-radius: 0;
+	background: #0c0d10;
+}
+
+body.videogallery-public-page footer,
+body.videogallery-public-page .skip-navigation {
+	display: none;
+}
+</style>
+
 <style scoped>
 .shared {
-	min-height: 100vh;
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow-y: auto;
 	background: #0c0d10;
 	color: #e9ecef;
 }
@@ -296,14 +336,53 @@ onMounted(load)
 	color: #8d949d;
 }
 
-@media (max-width: 700px) {
+@media (max-width: 1024px) {
 	.shared__bar,
 	.shared__body {
-		padding-inline: 16px;
+		padding-inline: 20px;
 	}
 
 	.shared__grid {
-		grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+		grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+	}
+}
+
+@media (max-width: 700px) {
+	.shared__bar {
+		flex-wrap: wrap;
+		gap: 8px;
+		padding: 10px 14px;
+	}
+
+	.shared__body {
+		padding: 18px 14px 48px;
+	}
+
+	.shared__crumbs {
+		flex: 1 0 100%;
+		order: 3;
+		font-size: 13px;
+	}
+
+	.shared__crumb {
+		min-height: 36px;
+	}
+
+	.shared__badge {
+		margin-inline-start: 0;
+	}
+
+	.shared__folders {
+		grid-template-columns: 1fr;
+	}
+
+	.shared__folder {
+		min-height: 52px;
+	}
+
+	.shared__grid {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 10px;
 	}
 }
 </style>

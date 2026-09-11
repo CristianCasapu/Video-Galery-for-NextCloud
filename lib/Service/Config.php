@@ -66,6 +66,11 @@ class Config {
 		'shift_cooldown' => 20,
 
 		'preview_enabled' => true,
+		// How many previews may be made at once. A page of forty cards asks for
+		// forty pictures in the same second, and without a limit that is forty
+		// encoders competing for the same processor.
+		'preview_concurrency' => 2,
+		'preview_threads' => 2,
 		'preview_seconds' => 6,
 		'preview_height' => 480,
 		'preview_start_percent' => 20,
@@ -267,6 +272,8 @@ class Config {
 			'preview_height' => max(180, min(1080, (int)$value)),
 			'preview_start_percent' => max(0, min(90, (int)$value)),
 			'prewarm_batch' => max(0, min(500, (int)$value)),
+			'preview_concurrency' => max(1, min(32, (int)$value)),
+			'preview_threads' => max(0, min(64, (int)$value)),
 			'index_batch' => max(10, min(5000, (int)$value)),
 			'nice_level' => max(0, min(19, (int)$value)),
 			'queue_wait_seconds' => max(0, min(120, (int)$value)),

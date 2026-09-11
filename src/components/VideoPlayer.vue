@@ -3,6 +3,13 @@
   - SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <template>
+	<!--
+	  - Moved out to the page body. Left where it was written, the player sits
+	  - inside the content pane and under Nextcloud's own header — which is not
+	  - merely untidy: the header's logo then sits on top of the close button, so
+	  - closing the player navigated away from the app instead.
+	  -->
+	<Teleport to="body">
 	<div class="player" :class="{ 'player--idle': !controlsVisible }"
 		tabindex="-1"
 		@mousemove="wakeControls"
@@ -64,15 +71,25 @@
 		</transition>
 
 		<div class="player__top">
-			<button class="player__icon" :aria-label="t('videogallery', 'Close')" @click="$emit('close')">
-				<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
-					<path fill="currentColor" d="M19 6.4 17.6 5 12 10.6 6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12z" />
+			<button class="player__back" :aria-label="t('videogallery', 'Back')" @click="leave">
+				<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+					<path fill="currentColor" d="M20 11H7.8l5.6-5.6L12 4l-8 8 8 8 1.4-1.4L7.8 13H20z" />
 				</svg>
+				<span class="player__back-label">{{ t('videogallery', 'Back') }}</span>
 			</button>
 			<div class="player__heading">
 				<span class="player__name">{{ item.basename }}</span>
 				<span class="player__mode">{{ heading }}</span>
 			</div>
+			<a v-if="!shared"
+				class="player__icon player__icon--right"
+				:href="filesUrl"
+				:title="t('videogallery', 'Show where this file is')"
+				:aria-label="t('videogallery', 'Show where this file is')">
+				<svg viewBox="0 0 24 24" width="21" height="21" aria-hidden="true">
+					<path fill="currentColor" d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8z" />
+				</svg>
+			</a>
 		</div>
 
 		<div class="player__controls">
@@ -242,11 +259,13 @@
 			:item="item"
 			@close="externalOpen = false" />
 	</div>
+	</Teleport>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import { t } from '@nextcloud/l10n'
+import { generateUrl } from '@nextcloud/router'
 import type HlsType from 'hls.js'
 import ExternalPlayerDialog from './ExternalPlayerDialog.vue'
 import PlayerMenu from './PlayerMenu.vue'
@@ -295,6 +314,7 @@ const props = defineProps<{
  * a visitor with a link as for the person who owns the file.
  */
 const shared = computed(() => (props.token ?? '') !== '')
+const filesUrl = computed(() => generateUrl('/f/{fileId}', { fileId: props.item.fileId }))
 const emit = defineEmits<{
 	close: []
 	progress: [fileId: number, position: number]
@@ -342,6 +362,7 @@ let pingTimer: number | undefined
 let progressTimer: number | undefined
 let noticeTimer: number | undefined
 let restoreTo = 0
+let pushedHistory = false
 let startedAt = 0
 let startupMs = 0
 let touch: { x: number, y: number, mode: 'none' | 'seek' | 'volume' | 'dim', startValue: number, startTime: number } | null = null
@@ -1139,6 +1160,28 @@ function cancelNext(): void {
 	window.clearInterval(countdownTimer)
 	upNext.value = null
 	countdown.value = 0
+	leave()
+}
+
+/**
+ * Leave the player and go back to whatever was on screen before it opened.
+ *
+ * Opening a video pushes a step into the browser's history, so the back button
+ * and the back gesture close the player rather than leaving the app — which is
+ * what anybody would expect, and what the button below does too.
+ */
+function leave(): void {
+	if (pushedHistory) {
+		pushedHistory = false
+		// Going back unwinds the step we added; the listener then closes us.
+		window.history.back()
+		return
+	}
+	emit('close')
+}
+
+function onPopState(): void {
+	pushedHistory = false
 	emit('close')
 }
 
@@ -1179,7 +1222,7 @@ function onKey(event: KeyboardEvent): void {
 		break
 	case 'Escape':
 		if (!document.fullscreenElement) {
-			emit('close')
+			leave()
 		}
 		break
 	}
@@ -1207,6 +1250,18 @@ onMounted(async () => {
 	}
 	window.addEventListener('pagehide', onUnload)
 	window.addEventListener('beforeunload', onUnload)
+	window.addEventListener('popstate', onPopState)
+	try {
+		window.history.pushState({ videogallery: props.item.fileId }, '')
+		pushedHistory = true
+	} catch {
+		// A page that will not take a history entry still plays; only the
+		// browser's back button loses its meaning.
+	}
+	// Everything else on the page goes away for the duration. A film with a
+	// search bar floating over it is not a film anybody wants to watch, and the
+	// header's own links sit over the controls and steal their clicks.
+	document.body.classList.add('videogallery-watching')
 	wakeControls()
 	await start()
 })
@@ -1214,6 +1269,8 @@ onMounted(async () => {
 onBeforeUnmount(async () => {
 	window.removeEventListener('pagehide', onUnload)
 	window.removeEventListener('beforeunload', onUnload)
+	window.removeEventListener('popstate', onPopState)
+	document.body.classList.remove('videogallery-watching')
 	unlockOrientation()
 	window.clearTimeout(gestureTimer)
 	window.clearInterval(countdownTimer)
@@ -1233,11 +1290,32 @@ onBeforeUnmount(async () => {
 defineExpose({ start })
 </script>
 
+<!--
+  - Not scoped: these reach outside the player, which is the point of them.
+  -->
+<style>
+/* While a film is playing there is nothing else to look at. */
+body.videogallery-watching #header,
+body.videogallery-watching #profiler-toolbar,
+body.videogallery-watching .skip-navigation {
+	display: none !important;
+}
+
+body.videogallery-watching {
+	overflow: hidden;
+}
+
+/* Above everything Nextcloud puts on a page, including its own dialogs. */
+.player {
+	z-index: 100001 !important;
+}
+</style>
+
 <style scoped>
 .player {
 	position: fixed;
 	inset: 0;
-	z-index: 10000;
+	z-index: 100001;
 	background: #000;
 	display: flex;
 	outline: none;
@@ -1358,8 +1436,46 @@ defineExpose({ start })
 	align-items: center;
 	gap: 12px;
 	padding: 14px 18px;
-	background: linear-gradient(to bottom, rgb(0 0 0 / 78%), rgb(0 0 0 / 0%));
+	/* Solid enough at the top that nothing behind it shows through, fading to
+	   nothing so it does not sit as a band across the picture. */
+	background: linear-gradient(to bottom, rgb(8 9 11 / 96%) 0%, rgb(8 9 11 / 78%) 45%, rgb(8 9 11 / 0%) 100%);
 	transition: opacity 220ms ease;
+}
+
+.player__back {
+	display: inline-flex;
+	align-items: center;
+	gap: 7px;
+	flex: 0 0 auto;
+	padding: 7px 13px 7px 9px;
+	border: none;
+	border-radius: 8px;
+	background: rgb(255 255 255 / 10%);
+	color: #fff;
+	font-size: 14px;
+	font-weight: 600;
+	cursor: pointer;
+	transition: background 120ms ease;
+}
+
+.player__back:hover {
+	background: rgb(255 255 255 / 20%);
+}
+
+.player__icon--right {
+	margin-inline-start: auto;
+	flex: 0 0 auto;
+	text-decoration: none;
+}
+
+@media (max-width: 560px) {
+	.player__back-label {
+		display: none;
+	}
+
+	.player__back {
+		padding: 7px 9px;
+	}
 }
 
 .player__heading {
@@ -1385,8 +1501,8 @@ defineExpose({ start })
 .player__controls {
 	position: absolute;
 	inset: auto 0 0;
-	padding: 30px 18px 14px;
-	background: linear-gradient(to top, rgb(0 0 0 / 88%), rgb(0 0 0 / 0%));
+	padding: 34px 18px 16px;
+	background: linear-gradient(to top, rgb(8 9 11 / 97%) 0%, rgb(8 9 11 / 88%) 55%, rgb(8 9 11 / 0%) 100%);
 	transition: opacity 220ms ease;
 }
 
@@ -1733,13 +1849,97 @@ defineExpose({ start })
 	color: #d5d9de;
 }
 
+@media (max-width: 1024px) {
+	.player__controls {
+		padding: 30px 14px 14px;
+	}
+
+	.player__top {
+		padding: 12px 14px;
+	}
+}
+
+/* Where there is a finger rather than a pointer, everything grows. */
+@media (pointer: coarse) {
+	.player__icon,
+	.player__back {
+		min-width: 46px;
+		min-height: 46px;
+	}
+
+	.player__scrub {
+		padding-block: 16px;
+	}
+
+	.player__scrub-track {
+		height: 6px;
+	}
+
+	.player__scrub-knob {
+		transform: translateY(-50%) scale(1);
+		width: 16px;
+		height: 16px;
+		margin-left: -8px;
+	}
+}
+
 @media (max-width: 700px) {
 	.player__time {
 		font-size: 12px;
+		margin-inline: 4px;
 	}
 
 	.player__volume-slider {
 		display: none;
+	}
+
+	.player__controls {
+		padding: 28px 8px calc(10px + env(safe-area-inset-bottom));
+	}
+
+	.player__row {
+		gap: 2px;
+	}
+
+	.player__name {
+		font-size: 14px;
+	}
+
+	.player__mode {
+		font-size: 11px;
+	}
+
+	.player__notice {
+		top: 64px;
+		font-size: 12px;
+		max-width: 88vw;
+	}
+
+	/* The thumbnail strip is wider than the screen is worth. */
+	.player__thumb {
+		display: none;
+	}
+}
+
+/* Very narrow: keep play, seek, time and full screen; the rest can go. */
+@media (max-width: 420px) {
+	.player__icon--right {
+		display: none;
+	}
+}
+
+/* A phone held sideways has almost no height to spare. */
+@media (orientation: landscape) and (max-height: 460px) {
+	.player__top {
+		padding: 8px 12px;
+	}
+
+	.player__controls {
+		padding: 22px 12px 8px;
+	}
+
+	.player__scrub {
+		padding-block: 8px;
 	}
 }
 </style>

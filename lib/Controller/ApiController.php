@@ -36,6 +36,7 @@ class ApiController extends OCSController {
 		private Library $library,
 		private GalleryFolder $galleryFolder,
 		private Indexer $indexer,
+		private \OCA\VideoGallery\Service\FileResolver $resolver,
 		private PreviewService $previews,
 		private Series $series,
 		private SubtitleService $subtitles,
@@ -195,6 +196,82 @@ class ApiController extends OCSController {
 			pathinfo($item->getName(), PATHINFO_FILENAME),
 			(int)round($item->getDurationMs() / 1000),
 		));
+	}
+
+	/**
+	 * Correct what the library says about a video.
+	 *
+	 * A file's own metadata is often wrong or missing — a camera with a dead
+	 * clock, a copy that lost its dates, a name that means nothing. What is
+	 * written here is kept apart from what was read out of the file, so reading
+	 * the file again never undoes it.
+	 */
+	#[NoAdminRequired]
+	public function setMetadata(int $fileId, string $title = '', string $description = '', int $takenAt = 0, bool $rename = false, bool $resetDate = false): DataResponse {
+		$userId = $this->userId();
+		$item = $this->items->find($userId, $fileId);
+		if ($item === null) {
+			return new DataResponse(['message' => 'Not found'], Http::STATUS_NOT_FOUND);
+		}
+
+		$title = trim($title);
+		if ($rename && $title !== '') {
+			$renamed = $this->renameFile($userId, $item, $title);
+			if ($renamed !== true) {
+				return new DataResponse(['message' => $renamed], Http::STATUS_BAD_REQUEST);
+			}
+			// The file now carries the name, so there is nothing to override.
+			$item->setCustomTitle(null);
+		} else {
+			$item->setCustomTitle($title === '' ? null : mb_substr($title, 0, 250));
+		}
+
+		$item->setDescription(trim($description) === '' ? null : mb_substr(trim($description), 0, 4000));
+
+		if ($resetDate) {
+			// Back to whatever the file itself says, read afresh.
+			$item->setDateLocked(0);
+			$item->setStatus('stale');
+			$item->setIndexedAt(0);
+		} elseif ($takenAt > 0) {
+			$item->setTakenAt($takenAt);
+			$item->setDateSource('manual');
+			$item->setDateLocked(1);
+		}
+
+		$this->items->update($item);
+		return new DataResponse(['item' => $item->jsonSerialize()]);
+	}
+
+	/**
+	 * Rename the file itself, keeping whatever extension it had.
+	 *
+	 * @return true|string true, or what went wrong
+	 */
+	private function renameFile(string $userId, \OCA\VideoGallery\Db\Item $item, string $title): true|string {
+		$file = $this->resolver->getFile($userId, $item->getFileId());
+		if ($file === null) {
+			return 'The file could not be found.';
+		}
+		$extension = pathinfo($item->getName(), PATHINFO_EXTENSION);
+		$clean = trim(str_replace(['/', '\\', "\0"], '', $title));
+		if ($clean === '') {
+			return 'That is not a name a file can have.';
+		}
+		$target = $clean . ($extension !== '' ? '.' . $extension : '');
+		if ($target === $item->getName()) {
+			return true;
+		}
+		try {
+			$file->move(dirname($file->getPath()) . '/' . $target);
+		} catch (\Throwable $e) {
+			return 'The file could not be renamed: ' . $e->getMessage();
+		}
+		$item->setName($target);
+		$item->setPath(trim(dirname($item->getPath()), '.') === ''
+			? $target
+			: dirname($item->getPath()) . '/' . $target);
+		return true;
 	}
 
 	/** Look for files that are not in the library yet. */

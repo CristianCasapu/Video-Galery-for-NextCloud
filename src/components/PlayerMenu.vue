@@ -158,4 +158,28 @@ onBeforeUnmount(() => document.removeEventListener('click', onOutside, true))
 	font-size: 11px;
 	color: #8d949d;
 }
+
+@media (pointer: coarse) {
+	.menu__trigger {
+		min-width: 46px;
+		min-height: 46px;
+	}
+
+	.menu__item {
+		min-height: 46px;
+	}
+}
+
+@media (max-width: 600px) {
+	.menu__panel {
+		/* Anchored to the screen rather than to the button, which on a narrow
+		   screen would put half of it off the edge. */
+		position: fixed;
+		right: 8px;
+		left: 8px;
+		bottom: calc(86px + env(safe-area-inset-bottom));
+		min-width: 0;
+		max-height: 50vh;
+	}
+}
 </style>

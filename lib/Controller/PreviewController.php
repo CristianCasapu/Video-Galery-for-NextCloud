@@ -57,6 +57,15 @@ class PreviewController extends Controller {
 		return $this->serve($fileId, Asset::SPRITE, 'image/jpeg');
 	}
 
+	private function flagFor(string $kind): int {
+		return match ($kind) {
+			Asset::POSTER => \OCA\VideoGallery\Db\Item::ASSET_POSTER,
+			Asset::LOOP => \OCA\VideoGallery\Db\Item::ASSET_LOOP,
+			Asset::SPRITE => \OCA\VideoGallery\Db\Item::ASSET_SPRITE,
+			default => 0,
+		};
+	}
+
 	private function serve(int $fileId, string $kind, string $contentType): Response {
 		$userId = $this->userSession->getUser()?->getUID() ?? '';
 		$item = $this->items->find($userId, $fileId);
@@ -65,7 +74,16 @@ class PreviewController extends Controller {
 		}
 		$path = $this->previews->ensure($item, $kind);
 		if ($path === null) {
-			return new DataDisplayResponse('Not available', Http::STATUS_NOT_FOUND);
+			// Either this cannot be made at all, or every place for making one
+			// is taken. The two deserve different answers: the second is worth
+			// coming back for.
+			if ($item->hasAsset($this->flagFor($kind))) {
+				return new DataDisplayResponse('Not available', Http::STATUS_NOT_FOUND);
+			}
+			return new DataDisplayResponse('Busy', Http::STATUS_SERVICE_UNAVAILABLE, [
+				'Retry-After' => '8',
+				'Cache-Control' => 'no-store',
+			]);
 		}
 		$response = new RangeResponse($path, $contentType, $this->request->getHeader('Range') ?: null);
 		// These only change when the file behind them does, and then they are

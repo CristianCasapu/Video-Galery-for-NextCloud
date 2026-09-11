@@ -168,14 +168,35 @@ watch(() => props.items, () => nextTick(updateArrows))
 	border-radius: 6px 0 0 6px;
 }
 
-@media (max-width: 700px) {
+@media (max-width: 1024px) {
 	.rail__title,
 	.rail__track {
-		padding-inline: 16px;
+		padding-inline: 20px;
 	}
+}
 
+/* No arrows where there is a finger to swipe with. */
+@media (max-width: 700px), (pointer: coarse) {
 	.rail__arrow {
 		display: none;
+	}
+}
+
+@media (max-width: 700px) {
+	.rail {
+		margin-block: 22px;
+	}
+
+	.rail__title,
+	.rail__track {
+		padding-inline: 14px;
+	}
+
+	.rail__track {
+		gap: 10px;
+		padding-block: 8px 14px;
+		/* Each swipe lands on a card rather than between two. */
+		scroll-snap-type: x mandatory;
 	}
 }
 </style>

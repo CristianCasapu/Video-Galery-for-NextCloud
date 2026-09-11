@@ -23,7 +23,7 @@
 				:alt="''"
 				loading="lazy"
 				decoding="async"
-				@error="posterFailed = true">
+				@error="onPosterError">
 			<div v-else class="card__poster card__poster--missing">
 				<span>{{ item.container.toUpperCase() }}</span>
 			</div>
@@ -107,9 +107,35 @@ let timer: number | undefined
 
 // A visitor with a link has no account, so the pictures have to come through
 // the link as well.
-const poster = computed(() => (props.token
-	? publicPosterUrl(props.token, props.item.fileId)
-	: posterUrl(props.item.fileId)))
+const posterAttempt = ref(0)
+const poster = computed(() => {
+	const base = props.token
+		? publicPosterUrl(props.token, props.item.fileId)
+		: posterUrl(props.item.fileId)
+	// A retry has to look like a different address, or the browser simply hands
+	// back the failure it cached.
+	return posterAttempt.value === 0 ? base : `${base}?try=${posterAttempt.value}`
+})
+
+/**
+ * A picture that is not there yet is not a picture that will never be there.
+ *
+ * Only so many previews are made at once, so opening a full page of them means
+ * most requests are turned away at first. Each card waits a little and asks
+ * again, spreading the load rather than insisting on being served now.
+ */
+function onPosterError(): void {
+	if (posterAttempt.value >= 4) {
+		posterFailed.value = true
+		return
+	}
+	const attempt = posterAttempt.value + 1
+	// Staggered, so a screenful of cards does not all come back at once.
+	const delay = 3000 * attempt + Math.random() * 2000
+	window.setTimeout(() => {
+		posterAttempt.value = attempt
+	}, delay)
+}
 const loopSrc = computed(() => (props.token
 	? publicLoopUrl(props.token, props.item.fileId)
 	: loopUrl(props.item.fileId)))
@@ -378,6 +404,12 @@ onBeforeUnmount(() => window.clearTimeout(timer))
 	text-overflow: ellipsis;
 }
 
+@media (max-width: 1024px) {
+	.card {
+		width: var(--card-width-medium, 210px);
+	}
+}
+
 @media (max-width: 700px) {
 	.card {
 		width: var(--card-width-small, 168px);
@@ -385,6 +417,19 @@ onBeforeUnmount(() => window.clearTimeout(timer))
 
 	.card--wide {
 		width: var(--card-width-small, 220px);
+	}
+
+	/* There is no pointer to hover with, so the share button is always there
+	   and the card does not grow under a finger. */
+	.card--active .card__frame {
+		transform: none;
+	}
+
+	.card__share {
+		opacity: 1;
+		transform: none;
+		width: 36px;
+		height: 36px;
 	}
 }
 </style>

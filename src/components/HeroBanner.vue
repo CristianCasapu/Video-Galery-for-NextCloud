@@ -177,13 +177,36 @@ const facts = computed(() => {
 	background: #e6e6e6;
 }
 
-@media (max-width: 700px) {
+@media (max-width: 1024px) {
 	.hero {
-		min-height: 46vh;
+		min-height: min(48vh, 420px);
 	}
 
 	.hero__body {
-		padding: 0 16px 26px;
+		padding: 0 20px 30px;
+	}
+}
+
+@media (max-width: 700px) {
+	.hero {
+		min-height: 40vh;
+	}
+
+	.hero__body {
+		padding: 0 14px 22px;
+		max-width: none;
+	}
+
+	.hero__facts {
+		margin-bottom: 16px;
+		font-size: 13px;
+	}
+
+	.hero__button {
+		flex: 1 1 auto;
+		justify-content: center;
+		min-height: 46px;
+		padding-inline: 16px;
 	}
 }
 </style>

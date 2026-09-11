@@ -6,6 +6,10 @@ export interface VideoItem {
 	path: string
 	name: string
 	basename: string
+	fileName: string
+	customTitle: string | null
+	description: string
+	dateLocked: boolean
 	folder: string
 	mimetype: string
 	size: number

@@ -71,19 +71,26 @@
 			</template>
 
 			<template v-else-if="view === 'timeline'">
-				<section v-for="day in days" :key="day.day" class="gallery__day">
-					<h2 class="gallery__day-title">{{ day.label }}</h2>
-					<div class="gallery__grid">
+				<!--
+				  - One continuous grid rather than a grid per day. A day with
+				  - three videos in it left most of a row empty and the page
+				  - looked half used; here the videos flow on and the dates sit
+				  - across the full width as dividers between them.
+				  -->
+				<div class="gallery__timeline">
+					<template v-for="day in days" :key="day.day">
+						<h2 class="gallery__day-title">{{ day.label }}</h2>
 						<VideoCard v-for="item in day.items"
 							:key="item.fileId"
 							:item="item"
 							:previews-enabled="config.previews.enabled"
 							@play="play"
 							@share="share" />
-					</div>
-				</section>
-				<button v-if="days.length && hasMore" class="gallery__more" @click="loadTimeline(true)">
-					{{ t('videogallery', 'Show more') }}
+					</template>
+				</div>
+				<div ref="sentinel" class="gallery__sentinel" aria-hidden="true" />
+				<button v-if="days.length && hasMore" class="gallery__more" :disabled="loadingMore" @click="loadMore">
+					{{ loadingMore ? t('videogallery', 'Loading…') : t('videogallery', 'Show more') }}
 				</button>
 			</template>
 
@@ -92,7 +99,7 @@
 					<span class="gallery__result-count">
 						{{ n('videogallery', '%n video', '%n videos', total) }}
 					</span>
-					<select v-model="sort" :aria-label="t('videogallery', 'Order')" @change="loadItems()">
+					<select v-model="sort" :aria-label="t('videogallery', 'Order')" @change="loadItems(); rememberView()">
 						<option value="taken_desc">{{ t('videogallery', 'Newest first') }}</option>
 						<option value="taken_asc">{{ t('videogallery', 'Oldest first') }}</option>
 						<option value="added_desc">{{ t('videogallery', 'Recently added') }}</option>
@@ -100,7 +107,7 @@
 						<option value="size_desc">{{ t('videogallery', 'Largest first') }}</option>
 						<option value="duration_desc">{{ t('videogallery', 'Longest first') }}</option>
 					</select>
-					<select v-model="folder" :aria-label="t('videogallery', 'Folder')" @change="loadItems()">
+					<select v-model="folder" :aria-label="t('videogallery', 'Folder')" @change="loadItems(); rememberView()">
 						<option value="">{{ t('videogallery', 'Every folder') }}</option>
 						<option v-for="entry in folders" :key="entry.path" :value="entry.path">
 							{{ entry.path || '/' }} ({{ entry.count }})
@@ -123,8 +130,9 @@
 						@share="share" />
 				</div>
 				<p v-if="!items.length" class="gallery__empty-line">{{ t('videogallery', 'Nothing matched.') }}</p>
-				<button v-if="hasMore" class="gallery__more" @click="loadItems(true)">
-					{{ t('videogallery', 'Show more') }}
+				<div ref="sentinel" class="gallery__sentinel" aria-hidden="true" />
+				<button v-if="hasMore" class="gallery__more" :disabled="loadingMore" @click="loadMore">
+					{{ loadingMore ? t('videogallery', 'Loading…') : t('videogallery', 'Show more') }}
 				</button>
 			</template>
 		</main>
@@ -137,7 +145,17 @@
 			@progress="onProgress"
 			@play="play" />
 
-		<InfoDialog v-if="details" :item="details" @close="details = null" @play="play" @share="share" />
+		<InfoDialog v-if="details"
+			:item="details"
+			@close="details = null"
+			@play="play"
+			@share="share"
+			@edit="edit" />
+
+		<MetadataDialog v-if="editing"
+			:item="editing"
+			@close="editing = null"
+			@saved="onEdited" />
 
 		<ShareDialog v-if="sharing"
 			:file-id="sharing.fileId"
@@ -148,11 +166,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { loadState } from '@nextcloud/initial-state'
 import { n, t } from '@nextcloud/l10n'
 import HeroBanner from '../components/HeroBanner.vue'
 import InfoDialog from '../components/InfoDialog.vue'
+import MetadataDialog from '../components/MetadataDialog.vue'
 import ShareDialog from '../components/ShareDialog.vue'
 import VideoCard from '../components/VideoCard.vue'
 import VideoPlayer from '../components/VideoPlayer.vue'
@@ -180,6 +199,10 @@ const folder = ref('')
 const nowPlaying = ref<VideoItem | null>(null)
 const details = ref<VideoItem | null>(null)
 const sharing = ref<{ fileId: number, name: string, isFolder: boolean } | null>(null)
+const editing = ref<VideoItem | null>(null)
+const sentinel = ref<HTMLElement | null>(null)
+const loadingMore = ref(false)
+let observer: IntersectionObserver | undefined
 
 const PAGE = 120
 let searchTimer: number | undefined
@@ -205,8 +228,52 @@ const emptyMessage = computed(() => {
 	return t('videogallery', 'No videos have been found in your account yet.')
 })
 
+/**
+ * Keep the address in step with what is on screen.
+ *
+ * Without this, reloading the page while looking at the timeline puts you back
+ * on the front page — and so does sending somebody the address of what you are
+ * looking at, which is worse.
+ */
+function rememberView(): void {
+	const parts = new URLSearchParams()
+	if (query.value) {
+		parts.set('q', query.value)
+	}
+	if (folder.value) {
+		parts.set('folder', folder.value)
+	}
+	if (sort.value !== 'taken_desc') {
+		parts.set('sort', sort.value)
+	}
+	const tail = parts.toString()
+	const hash = `#${view.value}${tail ? '?' + tail : ''}`
+	if (window.location.hash !== hash) {
+		// Replaced rather than pushed: the back button belongs to the player,
+		// which uses it to close itself.
+		window.history.replaceState(window.history.state, '', hash)
+	}
+}
+
+/** What the address says we should be looking at. */
+function readView(): void {
+	const hash = window.location.hash.replace(/^#/, '')
+	if (hash === '') {
+		return
+	}
+	const [name, tail] = hash.split('?')
+	if (name === 'timeline' || name === 'all' || name === 'browse') {
+		view.value = name
+	}
+	const parts = new URLSearchParams(tail ?? '')
+	query.value = parts.get('q') ?? ''
+	folder.value = parts.get('folder') ?? ''
+	sort.value = parts.get('sort') ?? 'taken_desc'
+}
+
 async function switchTo(next: 'browse' | 'timeline' | 'all'): Promise<void> {
 	view.value = next
+	rememberView()
 	if (next === 'timeline') {
 		await loadTimeline()
 	} else if (next === 'all') {
@@ -293,6 +360,7 @@ function onSearchInput(): void {
 			view.value = 'all'
 			await loadItems()
 		}
+		rememberView()
 	}, 280)
 }
 
@@ -304,6 +372,51 @@ async function onRescan(): Promise<void> {
 	} finally {
 		scanning.value = false
 	}
+}
+
+/**
+ * Fetch the next page, whichever view is asking.
+ *
+ * Guarded, because the watcher below fires again the moment the new rows push
+ * the marker back into view, and an unguarded call would empty the library into
+ * the page in one go.
+ */
+async function loadMore(): Promise<void> {
+	if (loadingMore.value || !hasMore.value) {
+		return
+	}
+	loadingMore.value = true
+	try {
+		await (view.value === 'timeline' ? loadTimeline(true) : loadItems(true))
+	} finally {
+		loadingMore.value = false
+	}
+}
+
+/**
+ * Watch for the bottom of the list coming into view.
+ *
+ * Scrolling to the end of what has been loaded is as clear a request for more
+ * as pressing a button, so the next page is fetched before the end is reached
+ * and the button becomes something for people who prefer to ask.
+ */
+function watchTheBottom(): void {
+	observer?.disconnect()
+	if (!sentinel.value) {
+		return
+	}
+	observer = new IntersectionObserver((entries) => {
+		if (entries.some((entry) => entry.isIntersecting)) {
+			loadMore()
+		}
+	}, {
+		// The scrolling happens inside the app, not in the window.
+		root: sentinel.value.closest('.gallery'),
+		// Start fetching a screenful early, so the rows are there by the time
+		// anybody reaches them.
+		rootMargin: '600px 0px',
+	})
+	observer.observe(sentinel.value)
 }
 
 function play(item: VideoItem): void {
@@ -321,6 +434,25 @@ function stop(): void {
 
 function showInfo(item: VideoItem): void {
 	details.value = item
+}
+
+function edit(item: VideoItem): void {
+	details.value = null
+	editing.value = item
+}
+
+/** A corrected title or date changes where the video sits, so reload the view. */
+async function onEdited(item: VideoItem): Promise<void> {
+	editing.value = null
+	for (const collection of [items.value, ...rails.value.map((rail) => rail.items), ...days.value.map((day) => day.items)]) {
+		const index = collection.findIndex((candidate) => candidate.fileId === item.fileId)
+		if (index >= 0) {
+			collection[index] = { ...collection[index], ...item }
+		}
+	}
+	if (view.value === 'timeline') {
+		await loadTimeline()
+	}
 }
 
 function share(item: VideoItem): void {
@@ -354,9 +486,22 @@ function onProgress(fileId: number, position: number): void {
 	}
 }
 
+watch([sentinel, view], () => nextTick(watchTheBottom))
+onBeforeUnmount(() => observer?.disconnect())
+
 onMounted(async () => {
-	await loadRails()
+	readView()
+	if (view.value === 'timeline') {
+		await loadTimeline()
+	} else if (view.value === 'all') {
+		await Promise.all([loadItems(), loadFolders()])
+	} else {
+		await loadRails()
+	}
 	// Arriving at a direct address for one video opens it straight away.
+	await nextTick()
+	watchTheBottom()
+
 	if (config.openFileId) {
 		const found = await fetchItems({ limit: 1, query: '' })
 		const match = found.items.find((candidate) => candidate.fileId === config.openFileId)
@@ -367,9 +512,41 @@ onMounted(async () => {
 })
 </script>
 
+<!--
+  - Nextcloud lays its content pane out as a flex row with the overflow clipped,
+  - and expects the app inside it to say how much room it wants and to do its own
+  - scrolling. Without that an app is squeezed to the width of its widest
+  - unbreakable child and its overflow simply disappears.
+  -->
+<style>
+/* An inline SVG sits on the text baseline, which leaves every icon a pixel or
+   two high and to the left of the middle of the box it is centred in. */
+#videogallery svg,
+#videogallery-public svg,
+.player svg,
+.share__panel svg,
+.info__panel svg {
+	display: block;
+}
+
+#videogallery {
+	flex: 1 1 auto;
+	min-width: 0;
+	width: 100%;
+	height: 100%;
+	overflow: hidden;
+	display: flex;
+	flex-direction: column;
+}
+</style>
+
 <style scoped>
 .gallery {
-	min-height: 100%;
+	flex: 1 1 auto;
+	min-height: 0;
+	width: 100%;
+	overflow-y: auto;
+	overflow-x: hidden;
 	background: #0c0d10;
 	color: #e9ecef;
 }
@@ -534,15 +711,28 @@ onMounted(async () => {
 	color: #8d949d;
 }
 
-.gallery__day {
+.gallery__timeline {
+	display: grid;
+	gap: 14px;
+	grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
 	padding: 22px 44px 0;
 }
 
+.gallery__timeline :deep(.card) {
+	width: 100%;
+}
+
 .gallery__day-title {
-	margin: 0 0 12px;
+	/* Across every column, so it reads as a divider rather than a first item. */
+	grid-column: 1 / -1;
+	margin: 14px 0 0;
 	font-size: 15px;
 	font-weight: 700;
 	color: #cfd3d8;
+}
+
+.gallery__day-title:first-child {
+	margin-top: 0;
 }
 
 .gallery__grid {
@@ -581,9 +771,15 @@ onMounted(async () => {
 	margin-inline-end: auto;
 }
 
+.gallery__sentinel {
+	height: 1px;
+}
+
 .gallery__more {
 	display: block;
-	margin: 28px auto 0;
+	/* Sitting in the middle of the space below the last row, rather than
+	   crowding it. */
+	margin: 40px auto 48px;
 	padding: 10px 26px;
 	border: 1px solid rgb(255 255 255 / 18%);
 	border-radius: 8px;
@@ -597,17 +793,69 @@ onMounted(async () => {
 	background: rgb(255 255 255 / 9%);
 }
 
+/* Tablets: the bar still fits on one line, but with less room to spare. */
+@media (max-width: 1024px) {
+	.gallery__bar {
+		padding-inline: 20px;
+		gap: 12px;
+	}
+
+	.gallery__search {
+		max-width: 260px;
+	}
+
+	.gallery__warning,
+	.gallery__timeline,
+	.gallery__grid--all,
+	.gallery__filters,
+	.gallery__empty {
+		padding-inline: 20px;
+	}
+
+	.gallery__timeline,
+	.gallery__grid {
+		grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+	}
+}
+
+/* Phones: the bar wraps, the search takes its own line, and everything that
+   can be tapped is big enough to tap. */
 @media (max-width: 700px) {
 	.gallery__bar {
 		flex-wrap: wrap;
-		padding: 10px 16px;
-		gap: 10px;
+		padding: 10px 14px;
+		gap: 8px;
+	}
+
+	.gallery__brand {
+		font-size: 15px;
+	}
+
+	.gallery__tabs {
+		order: 2;
+		flex: 1 1 auto;
+	}
+
+	.gallery__tab {
+		padding: 8px 11px;
+		min-height: 40px;
 	}
 
 	.gallery__search {
 		max-width: none;
-		order: 3;
+		order: 4;
 		width: 100%;
+		min-height: 42px;
+	}
+
+	.gallery__search input {
+		/* Under sixteen pixels and Safari zooms the page when it is focused. */
+		font-size: 16px;
+	}
+
+	.gallery__action {
+		order: 3;
+		min-height: 40px;
 	}
 
 	.gallery__action span {
@@ -615,15 +863,46 @@ onMounted(async () => {
 	}
 
 	.gallery__warning,
-	.gallery__day,
+	.gallery__timeline,
 	.gallery__grid--all,
-	.gallery__filters {
-		padding-inline: 16px;
+	.gallery__filters,
+	.gallery__empty {
+		padding-inline: 14px;
 		margin-inline: 0;
 	}
 
+	.gallery__timeline,
 	.gallery__grid {
 		grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+		gap: 10px;
+	}
+
+	.gallery__filters {
+		flex-wrap: wrap;
+		gap: 8px;
+	}
+
+	.gallery__filters select {
+		flex: 1 1 auto;
+		min-height: 40px;
+	}
+
+	.gallery__result-count {
+		flex: 1 0 100%;
+	}
+
+	.gallery__more {
+		width: calc(100% - 28px);
+		min-height: 46px;
+		margin-block: 28px 36px;
+	}
+}
+
+/* Narrow phones: two columns rather than one and a half. */
+@media (max-width: 420px) {
+	.gallery__timeline,
+	.gallery__grid {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
 	}
 }
 </style>

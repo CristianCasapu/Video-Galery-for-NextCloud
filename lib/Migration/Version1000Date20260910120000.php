@@ -52,6 +52,12 @@ class Version1000Date20260910120000 extends SimpleMigrationStep {
 			$t->addColumn('audio_tracks', Types::TEXT, ['notnull' => false]);
 			$t->addColumn('sub_tracks', Types::TEXT, ['notnull' => false]);
 			$t->addColumn('chapters', Types::TEXT, ['notnull' => false]);
+			// What a person has said about this video, as against what the file
+			// says about itself. Kept apart from the probed values so that
+			// reading the file again never overwrites somebody's correction.
+			$t->addColumn('custom_title', Types::STRING, ['notnull' => false, 'length' => 255]);
+			$t->addColumn('description', Types::TEXT, ['notnull' => false]);
+			$t->addColumn('date_locked', Types::SMALLINT, ['notnull' => true, 'default' => 0]);
 			// direct | remux | transcode_audio | transcode — worked out once, at index time.
 			$t->addColumn('play_mode', Types::STRING, ['notnull' => true, 'length' => 16, 'default' => '']);
 			$t->addColumn('status', Types::STRING, ['notnull' => true, 'length' => 16, 'default' => 'pending']);

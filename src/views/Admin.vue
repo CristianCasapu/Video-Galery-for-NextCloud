@@ -1104,4 +1104,39 @@ async function reindex(reprobe: boolean): Promise<void> {
 	font-size: 13px;
 	color: var(--color-text-maxcontrast);
 }
+
+@media (max-width: 700px) {
+	.vg-card {
+		padding: 14px 14px 16px;
+	}
+
+	.vg-card__head {
+		flex-direction: column;
+		align-items: stretch;
+	}
+
+	.vg-grid {
+		grid-template-columns: 1fr;
+	}
+
+	.vg-field--row {
+		flex-direction: column;
+		align-items: stretch;
+	}
+
+	.vg-btn {
+		min-height: 44px;
+	}
+
+	/* A table of numbers does not fit; let it scroll rather than squash. */
+	.vg-table {
+		display: block;
+		overflow-x: auto;
+		white-space: nowrap;
+	}
+
+	.vg-save {
+		flex-wrap: wrap;
+	}
+}
 </style>

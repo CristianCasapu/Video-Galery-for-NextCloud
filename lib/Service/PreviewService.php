@@ -39,7 +39,7 @@ class PreviewService {
 	 *
 	 * @param 'poster'|'loop'|'sprite' $kind
 	 */
-	public function ensure(Item $item, string $kind, bool $allowGenerate = true): ?string {
+	public function ensure(Item $item, string $kind, bool $allowGenerate = true, bool $mayWait = false): ?string {
 		$path = $this->paths->assetPath($item->getFileId(), $kind);
 		if (is_file($path)) {
 			$this->assets->touch($item->getFileId(), $kind);
@@ -57,13 +57,82 @@ class PreviewService {
 		if (!$allowGenerate || !$this->config->getBool('preview_enabled')) {
 			return null;
 		}
-		return $this->generate($item, $kind);
+		return $this->generate($item, $kind, $mayWait);
+	}
+
+	/**
+	 * Take one of the few places in which a preview may be made.
+	 *
+	 * Opening the library asks for every visible picture at once, and each one
+	 * that is missing starts an encoder. Forty cards on a screen meant forty
+	 * encoders, which is how a server with nobody watching anything comes to be
+	 * at full load. So there are a fixed number of places to stand, and a
+	 * request that finds them all taken is turned away — the background pass
+	 * will have made the picture by the time anyone looks again.
+	 *
+	 * @return resource|null the held place, to be given up when the work is done
+	 */
+	private function takeSlot(bool $mayWait) {
+		$slots = max(1, $this->config->getInt('preview_concurrency'));
+		$dir = $this->paths->root() . '/work/slots';
+		if (!is_dir($dir) && !@mkdir($dir, 0770, true) && !is_dir($dir)) {
+			return null;
+		}
+		for ($i = 0; $i < $slots; $i++) {
+			$handle = @fopen($dir . '/preview-' . $i . '.lock', 'c');
+			if ($handle === false) {
+				continue;
+			}
+			if (flock($handle, LOCK_EX | LOCK_NB)) {
+				return $handle;
+			}
+			fclose($handle);
+		}
+		if (!$mayWait) {
+			return null;
+		}
+		// Background work is in no hurry and would rather wait than skip.
+		$handle = @fopen($dir . '/preview-0.lock', 'c');
+		if ($handle !== false && flock($handle, LOCK_EX)) {
+			return $handle;
+		}
+		if ($handle !== false) {
+			fclose($handle);
+		}
+		return null;
+	}
+
+	private function releaseSlot($handle): void {
+		if (is_resource($handle)) {
+			flock($handle, LOCK_UN);
+			fclose($handle);
+		}
+	}
+
+	/**
+	 * Hold each preview to a couple of threads.
+	 *
+	 * Left alone, ffmpeg takes every core it can see. That is right for the one
+	 * film somebody is watching, and quite wrong for a picture nobody has asked
+	 * to wait for.
+	 *
+	 * @return list<string>
+	 */
+	private function threadArgs(): array {
+		$threads = $this->config->getInt('preview_threads');
+		return $threads > 0 ? ['-threads', (string)$threads] : [];
 	}
 
 	/** Make one asset, under a lock so it is only made once. */
-	public function generate(Item $item, string $kind): ?string {
+	public function generate(Item $item, string $kind, bool $mayWait = false): ?string {
 		$path = $this->paths->assetPath($item->getFileId(), $kind);
 		$this->paths->ensureParent($path);
+
+		$slot = $this->takeSlot($mayWait);
+		if ($slot === null) {
+			// Everything is busy. Saying so is better than joining in.
+			return null;
+		}
 
 		$lockFile = $path . '.lock';
 		$lock = @fopen($lockFile, 'c');
@@ -110,6 +179,7 @@ class PreviewService {
 			flock($lock, LOCK_UN);
 			fclose($lock);
 			@unlink($lockFile);
+			$this->releaseSlot($slot);
 		}
 	}
 
@@ -165,6 +235,7 @@ class PreviewService {
 		$height = max(360, $this->config->getInt('preview_height'));
 		$args = [
 			$binary, '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+			...$this->threadArgs(),
 			'-ss', (string)$this->sampleAt($item),
 			'-i', $input,
 			'-frames:v', '1',
@@ -206,6 +277,7 @@ class PreviewService {
 
 		$args = [
 			$binary, '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+			...$this->threadArgs(),
 			'-ss', (string)$this->sampleAt($item),
 			'-t', (string)$seconds,
 			'-i', $input,
@@ -245,6 +317,7 @@ class PreviewService {
 		}
 		$fallback = [
 			$binary, '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+			...$this->threadArgs(),
 			'-ss', (string)$this->sampleAt($item),
 			'-t', (string)$seconds,
 			'-i', $input,
@@ -279,6 +352,7 @@ class PreviewService {
 
 		$args = [
 			$binary, '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+			...$this->threadArgs(),
 			'-i', $input,
 			'-frames:v', '1',
 			'-vf', sprintf(
@@ -346,7 +420,7 @@ class PreviewService {
 			}
 			foreach ($this->items->missingAssets($flag, $budget, $userId) as $item) {
 				try {
-					$path = $this->generate($item, $kind);
+					$path = $this->generate($item, $kind, true);
 					if ($path !== null) {
 						$made[$kind]++;
 					} else {

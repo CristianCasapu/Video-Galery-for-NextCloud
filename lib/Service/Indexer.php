@@ -421,7 +421,14 @@ class Indexer {
 
 		$item->setContainer((string)$data['container']);
 		$item->setDurationMs((int)$data['duration_ms']);
-		$item->setBitrate((int)$data['bitrate']);
+		// Matroska and a few others often carry no overall bitrate, and a figure
+		// of zero is worse than an estimate: it is shown to people, and it is
+		// what the playback decision weighs against the measured connection.
+		$bitrate = (int)$data['bitrate'];
+		if ($bitrate <= 0 && $data['duration_ms'] > 500 && $file->getSize() > 0) {
+			$bitrate = (int)round(($file->getSize() * 8) / ($data['duration_ms'] / 1000));
+		}
+		$item->setBitrate($bitrate);
 		$item->setWidth((int)$data['width']);
 		$item->setHeight((int)$data['height']);
 		$item->setRotation((int)$data['rotation']);
@@ -441,13 +448,17 @@ class Indexer {
 		$item->setSize($file->getSize());
 		$item->setMtime($file->getMTime());
 
-		$taken = $data['taken_at'];
-		if (($taken['at'] ?? 0) > 0) {
-			$item->setTakenAt((int)$taken['at']);
-			$item->setDateSource((string)$taken['source']);
-		} else {
-			$item->setTakenAt($file->getMTime());
-			$item->setDateSource('mtime');
+		// A date somebody set by hand is the right one, and reading the file
+		// again is not a reason to reconsider it.
+		if ($item->getDateLocked() !== 1) {
+			$taken = $data['taken_at'];
+			if (($taken['at'] ?? 0) > 0) {
+				$item->setTakenAt((int)$taken['at']);
+				$item->setDateSource((string)$taken['source']);
+			} else {
+				$item->setTakenAt($file->getMTime());
+				$item->setDateSource('mtime');
+			}
 		}
 
 		$item->setProbeVersion(Probe::VERSION);

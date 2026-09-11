@@ -227,4 +227,39 @@ onMounted(async () => {
 	justify-content: flex-end;
 	margin-top: 18px;
 }
+
+@media (max-width: 600px) {
+	.sheet {
+		padding: 0;
+		place-items: end stretch;
+	}
+
+	.sheet__panel {
+		max-height: 92vh;
+		border-radius: 16px 16px 0 0;
+		padding: 18px 16px calc(18px + env(safe-area-inset-bottom));
+	}
+
+	.sheet__grid {
+		grid-template-columns: 1fr;
+	}
+
+	.sheet__option {
+		min-height: 56px;
+	}
+
+	.sheet__copy-row {
+		flex-wrap: wrap;
+	}
+
+	.sheet__copy input {
+		flex: 1 0 100%;
+		font-size: 16px;
+	}
+
+	.sheet__copy button,
+	.sheet__close {
+		min-height: 44px;
+	}
+}
 </style>

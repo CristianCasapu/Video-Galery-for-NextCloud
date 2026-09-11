@@ -273,7 +273,10 @@ class PublicController extends Controller {
 		}
 		$path = $this->previews->ensure($item, $kind);
 		if ($path === null) {
-			return new DataDisplayResponse('Not available', Http::STATUS_NOT_FOUND);
+			return new DataDisplayResponse('Busy', Http::STATUS_SERVICE_UNAVAILABLE, [
+				'Retry-After' => '8',
+				'Cache-Control' => 'no-store',
+			]);
 		}
 		$response = new RangeResponse($path, $contentType, $this->request->getHeader('Range') ?: null);
 		$response->cacheFor(604800, false, true);
