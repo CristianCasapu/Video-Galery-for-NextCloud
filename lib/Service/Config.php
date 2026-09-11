@@ -157,6 +157,65 @@ class Config {
 		'preview_crf' => 30,
 		'rail_size' => 24,
 
+		// -- What kind of thing is in a folder ------------------------------
+		//
+		// A library is kept in folders, and the folders mean different things:
+		// a course is watched in order from where you left off, a folder of
+		// phone clips is looked at newest first, a film is a film. The rules
+		// for telling them apart are here rather than in the code, because
+		// everybody names things differently and in their own language.
+		//
+		// Each entry is {id, label, words, namePattern, show, sequence}:
+		//   words       matched anywhere in the folder's path, case ignored
+		//   namePattern a regular expression; a folder whose file names mostly
+		//               match it belongs here even if its own name says nothing
+		//   show        'entry' to open at the part worth watching next,
+		//               'latest' to show the newest first
+		//   sequence    whether one part follows another, which is what makes
+		//               the next one start by itself
+		// The first entry that matches wins, so order is priority.
+		'categories' => [
+			[
+				'id' => 'course',
+				'label' => 'Courses',
+				'words' => ['course', 'courses', 'curs', 'cursuri', 'lectie', 'lecție', 'lectii', 'lecții',
+					'lesson', 'lessons', 'lecture', 'lectures', 'tutorial', 'tutoriale', 'training',
+					'bootcamp', 'academy', 'masterclass', 'workshop', 'module', 'modul', 'class'],
+				'namePattern' => '',
+				'show' => 'entry',
+				'sequence' => true,
+			],
+			[
+				'id' => 'series',
+				'label' => 'Series',
+				'words' => ['series', 'serial', 'seriale', 'season', 'sezon', 'episode', 'episod',
+					'episoade', 'chapter', 'capitol', 'part', 'partea'],
+				'namePattern' => '(?:s\\d{1,2}[\\s._-]?e\\d{1,2}|episode[\\s._-]?\\d{1,3}|ep[\\s._-]?\\d{1,3})',
+				'show' => 'entry',
+				'sequence' => true,
+			],
+			[
+				'id' => 'camera',
+				'label' => 'Camera',
+				'words' => ['camera', 'camere', 'dcim', 'instantupload', 'instant upload',
+					'camera uploads', 'telefon', 'phone', 'poze', 'photos', 'pictures', 'imagini'],
+				'namePattern' => '^(?:img|vid|video|pxl|dji|mov|dsc|gopr|mvi|wa|photo|screenrecord)[-_ ]?\\d',
+				'show' => 'latest',
+				'sequence' => false,
+			],
+			[
+				'id' => 'film',
+				'label' => 'Films',
+				'words' => ['film', 'filme', 'movie', 'movies', 'cinema', 'documentar', 'documentary'],
+				'namePattern' => '',
+				'show' => 'latest',
+				'sequence' => false,
+			],
+		],
+		// What a folder of plainly numbered files is, when nothing else matches.
+		'sequence_category' => 'course',
+		'other_label' => 'Folders',
+
 		// -- Watching in order ----------------------------------------------
 		'autoplay_next' => true,
 		'autoplay_delay' => 8,
@@ -168,7 +227,7 @@ class Config {
 	];
 
 	/** Values that are stored as JSON rather than as a scalar. */
-	private const JSON_KEYS = ['quality_ladder', 'excluded_paths', 'ignore_names', 'devices'];
+	private const JSON_KEYS = ['quality_ladder', 'excluded_paths', 'ignore_names', 'devices', 'categories'];
 
 	public function __construct(
 		private IAppConfig $appConfig,

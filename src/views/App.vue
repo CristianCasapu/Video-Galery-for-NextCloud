@@ -66,70 +66,136 @@
 						:items="rail.items"
 						:previews-enabled="config.previews.enabled"
 						@play="play"
-						@share="share" />
+						@share="share"
+						@folder="openFolder" />
 				</template>
 			</template>
 
 			<template v-else-if="view === 'timeline'">
-				<!--
-				  - One continuous grid rather than a grid per day. A day with
-				  - three videos in it left most of a row empty and the page
-				  - looked half used; here the videos flow on and the dates sit
-				  - across the full width as dividers between them.
-				  -->
-				<div class="gallery__timeline">
-					<template v-for="day in days" :key="day.day">
-						<h2 class="gallery__day-title">{{ day.label }}</h2>
-						<VideoCard v-for="item in day.items"
+				<section v-for="year in years" :key="year.year" class="gallery__year">
+					<h2 class="gallery__year-title">
+						{{ year.year }}
+						<span class="gallery__year-count">{{ n('videogallery', '%n video', '%n videos', year.count) }}</span>
+					</h2>
+
+					<div v-for="day in year.days" :key="day.day" class="gallery__dayblock">
+						<h3 class="gallery__day-title">{{ day.label }}</h3>
+
+						<!-- Within a day, the folder each came from: a morning's
+						     filming and an evening's lecture are not one heap. -->
+						<div v-for="group in day.groups" :key="group.path" class="gallery__group">
+							<button v-if="group.name" class="gallery__group-title" @click="openFolder(group.path)">
+								<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+									<path fill="currentColor" d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8z" />
+								</svg>
+								<span>{{ group.name }}</span>
+								<em>{{ group.count }}</em>
+							</button>
+							<div class="gallery__grid">
+								<VideoCard v-for="item in group.items"
+									:key="item.fileId"
+									:item="item"
+									:previews-enabled="config.previews.enabled"
+									@play="play"
+									@share="share"
+									@folder="openFolder" />
+							</div>
+						</div>
+					</div>
+				</section>
+
+				<div ref="sentinel" class="gallery__sentinel" aria-hidden="true" />
+				<button v-if="years.length && hasMore" class="gallery__more" :disabled="loadingMore" @click="loadMore">
+					{{ loadingMore ? t('videogallery', 'Loading…') : t('videogallery', 'Show more') }}
+				</button>
+			</template>
+
+			<!-- One folder, in the order it should be watched. -->
+			<template v-else-if="view === 'folder'">
+				<nav class="gallery__crumbs" aria-label="Folders">
+					<button class="gallery__crumb" @click="switchTo('all')">{{ t('videogallery', 'All folders') }}</button>
+					<template v-for="(crumb, index) in crumbs" :key="crumb.path">
+						<span class="gallery__crumb-sep" aria-hidden="true">/</span>
+						<button class="gallery__crumb"
+							:class="{ 'gallery__crumb--last': index === crumbs.length - 1 }"
+							@click="openFolder(crumb.path)">
+							{{ crumb.name }}
+						</button>
+					</template>
+				</nav>
+
+				<div v-if="folderView" class="gallery__folder">
+					<div class="gallery__folder-head">
+						<h2 class="gallery__folder-title">
+							{{ folderView.name }}
+							<span class="gallery__folder-count">{{ n('videogallery', '%n video', '%n videos', folderView.total) }}</span>
+						</h2>
+						<button class="gallery__action" @click="shareFolder">
+							<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+								<path fill="currentColor" d="M18 16a3 3 0 0 0-2 .8L9 12.7V12l-.1-.7 7-4.1A3 3 0 1 0 15 5l.1.7-7 4.1a3 3 0 1 0 0 4.4l7 4.1-.1.7a3 3 0 1 0 3-3z" />
+							</svg>
+							<span>{{ t('videogallery', 'Share this folder') }}</span>
+						</button>
+					</div>
+
+					<div v-if="folderView.children.length" class="gallery__subfolders">
+						<button v-for="child in folderView.children"
+							:key="child.path"
+							class="gallery__subfolder"
+							@click="openFolder(child.path)">
+							<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+								<path fill="currentColor" d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8z" />
+							</svg>
+							<span class="gallery__subfolder-name">{{ child.name }}</span>
+							<span class="gallery__subfolder-count">{{ child.count }}</span>
+						</button>
+					</div>
+
+					<div class="gallery__grid gallery__grid--all">
+						<VideoCard v-for="item in folderView.items"
 							:key="item.fileId"
 							:item="item"
 							:previews-enabled="config.previews.enabled"
 							@play="play"
-							@share="share" />
-					</template>
+							@share="share"
+							@folder="openFolder" />
+					</div>
+					<p v-if="!folderView.items.length && !folderView.children.length" class="gallery__empty-line">
+						{{ t('videogallery', 'There is nothing here.') }}
+					</p>
 				</div>
-				<div ref="sentinel" class="gallery__sentinel" aria-hidden="true" />
-				<button v-if="days.length && hasMore" class="gallery__more" :disabled="loadingMore" @click="loadMore">
-					{{ loadingMore ? t('videogallery', 'Loading…') : t('videogallery', 'Show more') }}
-				</button>
 			</template>
 
 			<template v-else>
 				<div class="gallery__filters">
 					<span class="gallery__result-count">
-						{{ n('videogallery', '%n video', '%n videos', total) }}
+						{{ n('videogallery', '%n folder', '%n folders', total) }}
 					</span>
-					<select v-model="sort" :aria-label="t('videogallery', 'Order')" @change="loadItems(); rememberView()">
-						<option value="taken_desc">{{ t('videogallery', 'Newest first') }}</option>
-						<option value="taken_asc">{{ t('videogallery', 'Oldest first') }}</option>
-						<option value="added_desc">{{ t('videogallery', 'Recently added') }}</option>
-						<option value="name_asc">{{ t('videogallery', 'By name') }}</option>
-						<option value="size_desc">{{ t('videogallery', 'Largest first') }}</option>
-						<option value="duration_desc">{{ t('videogallery', 'Longest first') }}</option>
-					</select>
-					<select v-model="folder" :aria-label="t('videogallery', 'Folder')" @change="loadItems(); rememberView()">
-						<option value="">{{ t('videogallery', 'Every folder') }}</option>
-						<option v-for="entry in folders" :key="entry.path" :value="entry.path">
-							{{ entry.path || '/' }} ({{ entry.count }})
-						</option>
-					</select>
-					<button v-if="folder" class="gallery__action" @click="shareFolder">
-						<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-							<path fill="currentColor" d="M18 16a3 3 0 0 0-2 .8L9 12.7V12l-.1-.7 7-4.1A3 3 0 1 0 15 5l.1.7-7 4.1a3 3 0 1 0 0 4.4l7 4.1-.1.7a3 3 0 1 0 3-3z" />
-						</svg>
-						<span>{{ t('videogallery', 'Share this folder') }}</span>
-					</button>
 				</div>
 
-				<div class="gallery__grid gallery__grid--all">
-					<VideoCard v-for="item in items"
-						:key="item.fileId"
-						:item="item"
-						:previews-enabled="config.previews.enabled"
-						@play="play"
-						@share="share" />
-				</div>
-				<p v-if="!items.length" class="gallery__empty-line">{{ t('videogallery', 'Nothing matched.') }}</p>
+				<!-- Folders rather than a wall of files, each shown from the
+				     part worth opening. -->
+				<section v-for="section in sections" :key="section.path" class="gallery__section">
+					<button class="gallery__section-title" @click="openFolder(section.path)">
+						<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+							<path fill="currentColor" d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8z" />
+						</svg>
+						<span class="gallery__section-name">{{ section.name }}</span>
+						<span class="gallery__section-kind">{{ kindLabel(section.kind) }}</span>
+						<span class="gallery__section-count">{{ n('videogallery', '%n video', '%n videos', section.count) }}</span>
+					</button>
+					<div class="gallery__grid">
+						<VideoCard v-for="item in section.items"
+							:key="item.fileId"
+							:item="item"
+							:previews-enabled="config.previews.enabled"
+							@play="play"
+							@share="share"
+							@folder="openFolder" />
+					</div>
+				</section>
+
+				<p v-if="!sections.length" class="gallery__empty-line">{{ t('videogallery', 'Nothing matched.') }}</p>
 				<div ref="sentinel" class="gallery__sentinel" aria-hidden="true" />
 				<button v-if="hasMore" class="gallery__more" :disabled="loadingMore" @click="loadMore">
 					{{ loadingMore ? t('videogallery', 'Loading…') : t('videogallery', 'Show more') }}
@@ -176,12 +242,27 @@ import ShareDialog from '../components/ShareDialog.vue'
 import VideoCard from '../components/VideoCard.vue'
 import VideoPlayer from '../components/VideoPlayer.vue'
 import VideoRail from '../components/VideoRail.vue'
-import { fetchFolders, fetchItems, fetchRails, fetchTimeline, rescan, shareableFolders } from '../api'
-import type { AppConfig, Rail, VideoItem } from '../types'
+import {
+	fetchEverything,
+	fetchFolder,
+	fetchItems,
+	fetchRails,
+	fetchTimeline,
+	rescan,
+	shareableFolders,
+} from '../api'
+import type {
+	AppConfig,
+	FolderSection,
+	FolderView as FolderViewData,
+	Rail,
+	TimelineYear,
+	VideoItem,
+} from '../types'
 
 const config = loadState<AppConfig>('videogallery', 'config')
 
-const view = ref<'browse' | 'timeline' | 'all'>('browse')
+const view = ref<'browse' | 'timeline' | 'all' | 'folder'>('browse')
 const loading = ref(true)
 const fault = ref('')
 const scanning = ref(false)
@@ -189,7 +270,9 @@ const scanning = ref(false)
 const hero = ref<VideoItem | null>(null)
 const rails = ref<Rail[]>([])
 const items = ref<VideoItem[]>([])
-const days = ref<Array<{ day: string, label: string, items: VideoItem[] }>>([])
+const years = ref<TimelineYear[]>([])
+const sections = ref<FolderSection[]>([])
+const folderView = ref<FolderViewData | null>(null)
 const folders = ref<Array<{ path: string, count: number }>>([])
 const total = ref(0)
 const query = ref('')
@@ -213,11 +296,33 @@ const tabs = computed(() => [
 	{ id: 'all' as const, label: t('videogallery', 'Everything') },
 ])
 
+/** The path back up from wherever we are, as buttons. */
+const crumbs = computed(() => {
+	const path = folderView.value?.path ?? ''
+	if (path === '') {
+		return []
+	}
+	const parts = path.split('/')
+	return parts.map((name, index) => ({ name, path: parts.slice(0, index + 1).join('/') }))
+})
+
+function kindLabel(kind: string): string {
+	return kindLabels.value[kind] ?? ''
+}
+
+const kindLabels = ref<Record<string, string>>({})
+
 const hasMore = computed(() => {
-	const shown = view.value === 'timeline'
-		? days.value.reduce((count, day) => count + day.items.length, 0)
-		: items.value.length
-	return shown < total.value
+	if (view.value === 'timeline') {
+		const shown = years.value.reduce((count, year) =>
+			count + year.days.reduce((inner, day) =>
+				inner + day.groups.reduce((deepest, group) => deepest + group.items.length, 0), 0), 0)
+		return shown < total.value
+	}
+	if (view.value === 'all') {
+		return sections.value.length < total.value
+	}
+	return items.value.length < total.value
 })
 
 const emptyMessage = computed(() => {
@@ -235,8 +340,11 @@ const emptyMessage = computed(() => {
  * on the front page — and so does sending somebody the address of what you are
  * looking at, which is worse.
  */
-function rememberView(): void {
+function rememberView(folderPath?: string): void {
 	const parts = new URLSearchParams()
+	if (folderPath !== undefined) {
+		parts.set('path', folderPath)
+	}
 	if (query.value) {
 		parts.set('q', query.value)
 	}
@@ -265,22 +373,37 @@ function readView(): void {
 	if (name === 'timeline' || name === 'all' || name === 'browse') {
 		view.value = name
 	}
+	if (name === 'folder') {
+		view.value = 'folder'
+	}
 	const parts = new URLSearchParams(tail ?? '')
 	query.value = parts.get('q') ?? ''
-	folder.value = parts.get('folder') ?? ''
+	folder.value = parts.get('path') ?? parts.get('folder') ?? ''
 	sort.value = parts.get('sort') ?? 'taken_desc'
+}
+
+/** Load whatever the current view needs, from wherever we arrived. */
+async function reload(): Promise<void> {
+	switch (view.value) {
+	case 'timeline':
+		await loadTimeline()
+		break
+	case 'all':
+		await loadEverything()
+		break
+	case 'folder':
+		await openFolder(folder.value)
+		break
+	default:
+		await loadRails()
+	}
 }
 
 async function switchTo(next: 'browse' | 'timeline' | 'all'): Promise<void> {
 	view.value = next
+	folderView.value = null
 	rememberView()
-	if (next === 'timeline') {
-		await loadTimeline()
-	} else if (next === 'all') {
-		await Promise.all([loadItems(), loadFolders()])
-	} else {
-		await loadRails()
-	}
+	await reload()
 }
 
 async function loadRails(): Promise<void> {
@@ -315,24 +438,41 @@ async function loadItems(append = false): Promise<void> {
 	}
 }
 
+/** Everything, as folders rather than as a wall of files. */
+async function loadEverything(append = false): Promise<void> {
+	loading.value = !append
+	try {
+		const data = await fetchEverything({
+			limit: 20,
+			offset: append ? sections.value.length : 0,
+			query: query.value,
+		})
+		sections.value = append ? [...sections.value, ...data.sections] : data.sections
+		total.value = data.total
+		for (const section of data.sections) {
+			if (section.kindLabel) {
+				kindLabels.value[section.kind] = section.kindLabel
+			}
+		}
+	} catch {
+		fault.value = t('videogallery', 'The library could not be loaded.')
+	} finally {
+		loading.value = false
+	}
+}
+
 async function loadTimeline(append = false): Promise<void> {
 	loading.value = !append
 	try {
-		const shown = days.value.reduce((count, day) => count + day.items.length, 0)
+		const shown = years.value.reduce((count, year) =>
+			count + year.days.reduce((inner, day) =>
+				inner + day.groups.reduce((deepest, group) => deepest + group.items.length, 0), 0), 0)
 		const data = await fetchTimeline({
 			limit: PAGE,
 			offset: append ? shown : 0,
 			query: query.value,
 		})
-		if (!append) {
-			days.value = data.days
-		} else {
-			// A day already on screen keeps its heading and gains the new items.
-			for (const day of data.days) {
-				const existing = days.value.find((candidate) => candidate.day === day.day)
-				existing ? existing.items.push(...day.items) : days.value.push(day)
-			}
-		}
+		years.value = append ? mergeYears(years.value, data.years) : data.years
 		total.value = data.total
 	} catch {
 		fault.value = t('videogallery', 'The library could not be loaded.')
@@ -341,24 +481,66 @@ async function loadTimeline(append = false): Promise<void> {
 	}
 }
 
-async function loadFolders(): Promise<void> {
-	try {
-		folders.value = (await fetchFolders()).folders
-	} catch {
-		folders.value = []
+/**
+ * Fold a new page into what is already on screen.
+ *
+ * A page boundary falls wherever it falls, which is usually in the middle of a
+ * day and often in the middle of a folder's worth of that day. Appending
+ * without merging would print the same date twice with a gap between.
+ */
+function mergeYears(existing: TimelineYear[], incoming: TimelineYear[]): TimelineYear[] {
+	const merged = existing.map((year) => ({ ...year, days: [...year.days] }))
+	for (const year of incoming) {
+		const sameYear = merged.find((candidate) => candidate.year === year.year)
+		if (!sameYear) {
+			merged.push({ ...year, days: [...year.days] })
+			continue
+		}
+		sameYear.count += year.count
+		for (const day of year.days) {
+			const sameDay = sameYear.days.find((candidate) => candidate.day === day.day)
+			if (!sameDay) {
+				sameYear.days.push(day)
+				continue
+			}
+			for (const group of day.groups) {
+				const sameGroup = sameDay.groups.find((candidate) => candidate.path === group.path)
+				if (sameGroup) {
+					sameGroup.items.push(...group.items)
+				} else {
+					sameDay.groups.push(group)
+				}
+			}
+		}
 	}
+	return merged
+}
+
+/** Open one folder, in the order it should be watched. */
+async function openFolder(path: string): Promise<void> {
+	view.value = 'folder'
+	loading.value = true
+	rememberView(path)
+	try {
+		folderView.value = await fetchFolder(path)
+	} catch {
+		fault.value = t('videogallery', 'That folder could not be opened.')
+	} finally {
+		loading.value = false
+	}
+	document.querySelector('.gallery')?.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
 function onSearchInput(): void {
 	window.clearTimeout(searchTimer)
 	searchTimer = window.setTimeout(async () => {
 		if (query.value.trim() === '' && view.value === 'all') {
-			await loadItems()
+			await loadEverything()
 			return
 		}
 		if (query.value.trim() !== '') {
 			view.value = 'all'
-			await loadItems()
+			await loadEverything()
 		}
 		rememberView()
 	}, 280)
@@ -368,7 +550,7 @@ async function onRescan(): Promise<void> {
 	scanning.value = true
 	try {
 		await rescan()
-		await (view.value === 'browse' ? loadRails() : view.value === 'timeline' ? loadTimeline() : loadItems())
+		await reload()
 	} finally {
 		scanning.value = false
 	}
@@ -387,7 +569,7 @@ async function loadMore(): Promise<void> {
 	}
 	loadingMore.value = true
 	try {
-		await (view.value === 'timeline' ? loadTimeline(true) : loadItems(true))
+		await (view.value === 'timeline' ? loadTimeline(true) : loadEverything(true))
 	} finally {
 		loadingMore.value = false
 	}
@@ -444,7 +626,7 @@ function edit(item: VideoItem): void {
 /** A corrected title or date changes where the video sits, so reload the view. */
 async function onEdited(item: VideoItem): Promise<void> {
 	editing.value = null
-	for (const collection of [items.value, ...rails.value.map((rail) => rail.items), ...days.value.map((day) => day.items)]) {
+	for (const collection of everyCardList()) {
 		const index = collection.findIndex((candidate) => candidate.fileId === item.fileId)
 		if (index >= 0) {
 			collection[index] = { ...collection[index], ...item }
@@ -461,13 +643,17 @@ function share(item: VideoItem): void {
 }
 
 /**
- * Share the folder currently being looked at, so a whole course can be handed
- * over in one link rather than one video at a time.
+ * Share the folder being looked at, so a whole course goes over in one link
+ * rather than one video at a time.
  */
 async function shareFolder(): Promise<void> {
+	const path = folderView.value?.path ?? folder.value
+	if (!path) {
+		return
+	}
 	try {
 		const { folders: shareable } = await shareableFolders()
-		const match = shareable.find((entry) => entry.path === folder.value)
+		const match = shareable.find((entry: { path: string }) => entry.path === path)
 		if (match) {
 			sharing.value = { fileId: match.fileId, name: match.name, isFolder: true }
 		}
@@ -476,8 +662,27 @@ async function shareFolder(): Promise<void> {
 	}
 }
 
+/** Every list a card may be sitting in, wherever the page is. */
+function everyCardList(): VideoItem[][] {
+	const lists: VideoItem[][] = [items.value, ...rails.value.map((rail) => rail.items)]
+	for (const section of sections.value) {
+		lists.push(section.items)
+	}
+	for (const year of years.value) {
+		for (const day of year.days) {
+			for (const group of day.groups) {
+				lists.push(group.items)
+			}
+		}
+	}
+	if (folderView.value) {
+		lists.push(folderView.value.items)
+	}
+	return lists
+}
+
 function onProgress(fileId: number, position: number): void {
-	for (const collection of [items.value, ...rails.value.map((rail) => rail.items), ...days.value.map((day) => day.items)]) {
+	for (const collection of everyCardList()) {
 		const found = collection.find((candidate) => candidate.fileId === fileId)
 		if (found?.progress) {
 			found.progress.position = position
@@ -494,7 +699,7 @@ onMounted(async () => {
 	if (view.value === 'timeline') {
 		await loadTimeline()
 	} else if (view.value === 'all') {
-		await Promise.all([loadItems(), loadFolders()])
+		await loadEverything()
 	} else {
 		await loadRails()
 	}
@@ -711,6 +916,213 @@ onMounted(async () => {
 	color: #8d949d;
 }
 
+.gallery__year {
+	padding: 26px 44px 0;
+}
+
+.gallery__year-title {
+	display: flex;
+	align-items: baseline;
+	gap: 10px;
+	margin: 0 0 4px;
+	padding-bottom: 8px;
+	border-bottom: 1px solid rgb(255 255 255 / 9%);
+	font-size: 22px;
+	font-weight: 800;
+	color: #fff;
+}
+
+.gallery__year-count {
+	font-size: 12px;
+	font-weight: 500;
+	color: var(--color-text-maxcontrast, #8a9099);
+}
+
+.gallery__dayblock {
+	margin-top: 18px;
+}
+
+.gallery__group {
+	margin-top: 12px;
+}
+
+.gallery__group-title,
+.gallery__section-title,
+.gallery__crumb,
+.gallery__subfolder {
+	font-family: inherit;
+	cursor: pointer;
+}
+
+.gallery__group-title {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	margin-bottom: 8px;
+	padding: 4px 9px 4px 7px;
+	border: none;
+	border-radius: 7px;
+	background: rgb(255 255 255 / 6%);
+	color: #cfd3d8;
+	font-size: 12px;
+}
+
+.gallery__group-title:hover {
+	background: rgb(255 255 255 / 14%);
+	color: #fff;
+}
+
+.gallery__group-title em {
+	font-style: normal;
+	color: #7f868e;
+}
+
+.gallery__section {
+	padding: 0 44px;
+	margin-bottom: 26px;
+}
+
+.gallery__section-title {
+	display: flex;
+	align-items: center;
+	gap: 9px;
+	width: 100%;
+	margin-bottom: 10px;
+	padding: 8px 10px;
+	border: none;
+	border-radius: 9px;
+	background: rgb(255 255 255 / 5%);
+	color: #e9ecef;
+	text-align: start;
+}
+
+.gallery__section-title:hover {
+	background: rgb(255 255 255 / 11%);
+}
+
+.gallery__section-name {
+	font-size: 15px;
+	font-weight: 700;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.gallery__section-kind {
+	padding: 2px 8px;
+	border-radius: 999px;
+	background: rgb(229 9 20 / 22%);
+	color: #f3b4b7;
+	font-size: 10px;
+	font-weight: 700;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	white-space: nowrap;
+}
+
+.gallery__section-count {
+	margin-inline-start: auto;
+	font-size: 12px;
+	color: #8a9099;
+	white-space: nowrap;
+}
+
+.gallery__crumbs {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 2px;
+	padding: 18px 44px 0;
+	font-size: 13px;
+	color: #8a9099;
+}
+
+.gallery__crumb {
+	padding: 5px 8px;
+	border: none;
+	border-radius: 6px;
+	background: transparent;
+	color: inherit;
+	font-size: 13px;
+}
+
+.gallery__crumb:hover {
+	background: rgb(255 255 255 / 10%);
+	color: #fff;
+}
+
+.gallery__crumb--last {
+	color: #fff;
+	font-weight: 600;
+}
+
+.gallery__crumb-sep {
+	color: #565c63;
+}
+
+.gallery__folder-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	flex-wrap: wrap;
+	padding: 12px 44px 0;
+}
+
+.gallery__folder-title {
+	display: flex;
+	align-items: baseline;
+	gap: 10px;
+	margin: 0;
+	font-size: 21px;
+	font-weight: 800;
+	color: #fff;
+}
+
+.gallery__folder-count {
+	font-size: 12px;
+	font-weight: 500;
+	color: #8a9099;
+}
+
+.gallery__subfolders {
+	display: grid;
+	gap: 8px;
+	grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+	padding: 16px 44px 4px;
+}
+
+.gallery__subfolder {
+	display: flex;
+	align-items: center;
+	gap: 9px;
+	padding: 11px 13px;
+	border: 1px solid rgb(255 255 255 / 12%);
+	border-radius: 10px;
+	background: rgb(255 255 255 / 4%);
+	color: #e9ecef;
+	text-align: start;
+}
+
+.gallery__subfolder:hover {
+	background: rgb(255 255 255 / 10%);
+}
+
+.gallery__subfolder-name {
+	flex: 1;
+	min-width: 0;
+	font-size: 14px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.gallery__subfolder-count {
+	font-size: 11px;
+	color: #8a9099;
+}
+
 .gallery__timeline {
 	display: grid;
 	gap: 14px;
@@ -808,7 +1220,12 @@ onMounted(async () => {
 	.gallery__timeline,
 	.gallery__grid--all,
 	.gallery__filters,
-	.gallery__empty {
+	.gallery__empty,
+	.gallery__year,
+	.gallery__section,
+	.gallery__crumbs,
+	.gallery__folder-head,
+	.gallery__subfolders {
 		padding-inline: 20px;
 	}
 
@@ -866,9 +1283,22 @@ onMounted(async () => {
 	.gallery__timeline,
 	.gallery__grid--all,
 	.gallery__filters,
-	.gallery__empty {
+	.gallery__empty,
+	.gallery__year,
+	.gallery__section,
+	.gallery__crumbs,
+	.gallery__folder-head,
+	.gallery__subfolders {
 		padding-inline: 14px;
 		margin-inline: 0;
+	}
+
+	.gallery__year-title {
+		font-size: 19px;
+	}
+
+	.gallery__subfolders {
+		grid-template-columns: 1fr;
 	}
 
 	.gallery__timeline,

@@ -46,6 +46,7 @@
 
 			<span v-if="item.duration" class="card__duration">{{ clock(item.duration) }}</span>
 			<span v-if="badge" class="card__badge">{{ badge }}</span>
+			<span v-if="reasonLabel" class="card__reason">{{ reasonLabel }}</span>
 
 			<div v-if="progressPercent > 0" class="card__progress">
 				<div class="card__progress-bar" :style="{ width: progressPercent + '%' }" />
@@ -70,7 +71,20 @@
 
 		<div class="card__meta">
 			<span class="card__title" :title="item.path">{{ item.basename }}</span>
-			<span class="card__sub">{{ subtitle }}</span>
+			<span class="card__sub">
+				<!-- The folder is a way in, not only a label: a course card is
+				     most useful next to the course it came from. -->
+				<button v-if="item.collection?.name"
+					class="card__folder"
+					:title="t('videogallery', 'Open {folder}', { folder: item.collection.name })"
+					@click.stop="$emit('folder', item.collection!.path)">
+					<svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">
+						<path fill="currentColor" d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8z" />
+					</svg>
+					<span>{{ item.collection.name }}</span>
+				</button>
+				<span v-else>{{ subtitle }}</span>
+			</span>
 		</div>
 	</div>
 </template>
@@ -95,7 +109,11 @@ const props = withDefaults(defineProps<{
 	token: '',
 })
 
-defineEmits<{ play: [item: VideoItem], share: [item: VideoItem] }>()
+defineEmits<{
+	play: [item: VideoItem]
+	share: [item: VideoItem]
+	folder: [path: string]
+}>()
 
 const hovering = ref(false)
 const showLoop = ref(false)
@@ -151,6 +169,22 @@ const progressPercent = computed(() => {
 		return 0
 	}
 	return Math.min(100, Math.max(1, progress.percent))
+})
+
+/** Why this card is the one being shown out of everything in its folder. */
+const reasonLabel = computed(() => {
+	switch (props.item.reason) {
+	case 'resume':
+		return t('videogallery', 'Carry on')
+	case 'next':
+		return t('videogallery', 'Next')
+	case 'first':
+		return t('videogallery', 'Start')
+	case 'again':
+		return t('videogallery', 'Watched')
+	default:
+		return ''
+	}
 })
 
 const badge = computed(() => {
@@ -313,14 +347,56 @@ onBeforeUnmount(() => window.clearTimeout(timer))
 	background: rgb(229 9 20 / 90%);
 }
 
-.card__progress {
+.card__reason {
 	position: absolute;
 	left: 8px;
-	right: 8px;
 	bottom: 8px;
-	height: 3px;
-	border-radius: 2px;
-	background: rgb(255 255 255 / 30%);
+	padding: 2px 8px;
+	border-radius: 999px;
+	background: rgb(8 9 11 / 82%);
+	color: #fff;
+	font-size: 10px;
+	font-weight: 700;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	line-height: 1.7;
+}
+
+.card__folder {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	max-width: 100%;
+	padding: 2px 6px 2px 4px;
+	margin-inline-start: -4px;
+	border: none;
+	border-radius: 5px;
+	background: transparent;
+	color: var(--color-text-maxcontrast, #9aa0a6);
+	font-size: 11px;
+	font-family: inherit;
+	cursor: pointer;
+	overflow: hidden;
+}
+
+.card__folder span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.card__folder:hover {
+	background: rgb(255 255 255 / 10%);
+	color: #fff;
+}
+
+.card__progress {
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	height: 4px;
+	background: rgb(255 255 255 / 26%);
 	overflow: hidden;
 }
 

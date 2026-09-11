@@ -5,7 +5,49 @@ All notable changes to Video Gallery are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.2.0] — 2026-09-11
+## [1.3.0] — 2026-09-11
+
+The library is arranged by the folders it is kept in, and what those folders
+mean is something you decide rather than something the app assumes.
+
+### Kinds of folder
+
+- Folders are sorted into kinds — courses, series, camera, films, and whatever
+  else you define — by **rules you write in the settings**: words that appear in
+  a folder's path, or a pattern its file names match
+- Each kind is shown the way it wants showing: **opened at the part worth
+  watching next**, or **newest first**
+- Each kind says whether one part follows another, which is what makes the next
+  one start by itself when the last finishes
+- The first kind that matches a folder wins, so the order is the order they are
+  tried in, and it can be rearranged
+
+### Where to pick things up
+
+- A course shows the part you had reached, the next part nobody has started, or
+  its beginning — whichever applies, marked as such on the card
+- A folder of clips shows its newest
+- The red line showing how far through a video you got now appears everywhere it
+  should. It was only ever sent with the flat list, so the front page never had it
+
+### Finding your way around
+
+- Every card carries the folder it came from, and **the folder is a way in**:
+  press it and that folder opens, in the order it should be watched
+- A folder view with a path back up through it, and the folders inside it
+- **Everything** is now a page of folders rather than a wall of files, each
+  opened at the part worth opening
+- **Timeline** is arranged by year, then by day, and within a day by the folder
+  each video came from
+- Browse no longer has a row per year; that belongs in the timeline
+
+### Under it
+
+- The whole arrangement is worked out from one query rather than one per folder,
+  and kept for a minute or two, because a library of two hundred folders cannot
+  afford two hundred round trips to be looked at
+
+
 
 ### Fixed
 

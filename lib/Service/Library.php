@@ -10,223 +10,241 @@ namespace OCA\VideoGallery\Service;
 use OCA\VideoGallery\Db\Item;
 use OCA\VideoGallery\Db\ItemMapper;
 use OCA\VideoGallery\Db\ProgressMapper;
+use OCP\ICache;
+use OCP\ICacheFactory;
 use OCP\IL10N;
 
 /**
- * Arranges a pile of files into something worth looking at: the rows on the
- * front page, and the one video that gets the big treatment at the top.
+ * Arranges a pile of files into something worth looking at.
+ *
+ * The arrangement follows how people actually keep video: a course in one
+ * folder, a holiday in another, whatever the phone saved in a third. So the
+ * unit here is the folder rather than the file, and each folder is shown in the
+ * way that suits what is in it — a course by the part you had reached, a folder
+ * of clips by its newest.
  */
 class Library {
-	/** How many videos a row on the front page holds. */
-	private function railSize(): int {
-		return $this->config->getInt('rail_size');
-	}
+	private ICache $cache;
 
 	public function __construct(
 		private ItemMapper $items,
 		private ProgressMapper $progress,
+		private Collections $collections,
 		private GalleryFolder $folder,
 		private Config $config,
 		private IL10N $l10n,
+		ICacheFactory $cacheFactory,
 	) {
+		$this->cache = $cacheFactory->createDistributed('videogallery-library');
 	}
 
+	private function railSize(): int {
+		return $this->config->getInt('rail_size');
+	}
+
+	// -- the front page -----------------------------------------------------
+
 	/**
-	 * The front page.
-	 *
 	 * @return array<string, mixed>
 	 */
 	public function home(string $userId): array {
+		// Arranging a library is the same work for every visit within a minute
+		// or two of itself, and it is the one page people open most.
+		$key = 'home-' . $userId;
+		$cached = $this->cache->get($key);
+		if (is_array($cached)) {
+			return $cached;
+		}
+		$home = $this->buildHome($userId);
+		$this->cache->set($key, $home, 90);
+		return $home;
+	}
+
+	public function forget(string $userId): void {
+		$this->cache->remove('home-' . $userId);
+	}
+
+	/** @return array<string, mixed> */
+	private function buildHome(string $userId): array {
+		$folders = $this->collections->build($userId);
+		$watched = $this->progress->allFor($userId);
 		$rails = [];
-		$this->addRail($rails, 'continue', $this->l10n->t('Carry on watching'), $this->continueWatching($userId));
-		$this->addRail($rails, 'mine', $this->folder->name(), $this->inDefaultFolder($userId));
-		$this->addRail($rails, 'recent', $this->l10n->t('Recently added'), $this->recent($userId));
-		$this->addRail($rails, 'onthisday', $this->onThisDayTitle(), $this->onThisDay($userId));
-		foreach ($this->yearRails($userId) as $rail) {
-			$this->addRail($rails, $rail['id'], $rail['title'], $rail['items']);
+
+		// Where you left off, across everything.
+		$resume = [];
+		foreach ($this->progress->unfinished($userId, $this->railSize()) as $entry) {
+			$resume[] = $entry->getFileId();
 		}
-		$this->addRail($rails, 'films', $this->l10n->t('Longer than twenty minutes'), $this->byDuration($userId, 1200, 0));
-		$this->addRail($rails, 'clips', $this->l10n->t('Short clips'), $this->byDuration($userId, 0, 120));
-		foreach ($this->folderRails($userId) as $rail) {
-			$this->addRail($rails, $rail['id'], $rail['title'], $rail['items']);
+		$this->addRail($rails, 'continue', $this->l10n->t('Carry on watching'), $userId, $resume, $folders, $watched);
+
+		// A row for each kind of thing the administrator has defined, in the
+		// order they defined them, each shown the way that kind wants showing:
+		// a course opened at the part worth watching next, a folder of clips
+		// newest first.
+		foreach ($this->collections->categories() as $category) {
+			if ($category['id'] === Collections::OTHER) {
+				continue;
+			}
+			$ranked = $this->rank($folders, $category['id'], $watched);
+			if ($ranked === []) {
+				continue;
+			}
+			$ids = [];
+			$reasons = [];
+			if ($category['show'] === 'latest') {
+				foreach ($ranked as $folder) {
+					foreach ($this->collections->latest($folder, 8) as $fileId) {
+						$ids[] = $fileId;
+					}
+					if (count($ids) >= $this->railSize() * 2) {
+						break;
+					}
+				}
+				$ids = array_slice($this->newestFirst($userId, $ids), 0, $this->railSize());
+			} else {
+				foreach (array_slice($ranked, 0, $this->railSize()) as $folder) {
+					$entry = $folder['entry'];
+					if ($entry === null) {
+						continue;
+					}
+					$ids[] = $entry['fileId'];
+					$reasons[$entry['fileId']] = $entry['reason'];
+				}
+			}
+			$this->addRail($rails, $category['id'], $this->l10n->t($category['label']), $userId, $ids, $folders, $watched, $reasons);
 		}
-		$this->addRail($rails, 'rediscover', $this->l10n->t('Worth another look'), $this->rediscover($userId));
+
+		$recent = array_map(
+			static fn (Item $item) => $item->getFileId(),
+			$this->items->search($userId, ['sort' => 'added_desc'], $this->railSize()),
+		);
+		$this->addRail($rails, 'recent', $this->l10n->t('Recently added'), $userId, $recent, $folders, $watched);
+
+		// Everything that fitted no description, one card per folder.
+		$otherIds = [];
+		$otherReasons = [];
+		$mine = $this->folder->name();
+		foreach (array_slice($this->rank($folders, Collections::OTHER, $watched), 0, $this->railSize()) as $folder) {
+			$entry = $folder['entry'];
+			if ($entry === null || $folder['path'] === '' || $folder['path'] === $mine) {
+				continue;
+			}
+			$otherIds[] = $entry['fileId'];
+			$otherReasons[$entry['fileId']] = $entry['reason'];
+		}
+		$other = $this->collections->category(Collections::OTHER);
+		$this->addRail($rails, 'collections', $this->l10n->t((string)($other['label'] ?? 'Folders')), $userId, $otherIds, $folders, $watched, $otherReasons);
+
+		$this->addRail($rails, 'rediscover', $this->l10n->t('Worth another look'), $userId, $this->rediscover($userId), $folders, $watched);
 
 		return [
-			'hero' => $this->hero($userId, $rails),
+			'hero' => $this->hero($userId, $folders, $watched),
 			'rails' => $rails,
 			'stats' => $this->items->stats($userId),
 		];
 	}
 
 	/**
-	 * @param list<array<string, mixed>> $rails
-	 * @param list<Item> $items
+	 * Collections of one kind, most worth showing first.
+	 *
+	 * Something half watched comes before something untouched, and among the
+	 * untouched the most recent comes first — which is the order anybody would
+	 * put them in if asked.
+	 *
+	 * @param array<string, array<string, mixed>> $folders
+	 * @param array<int, \OCA\VideoGallery\Db\Progress> $watched
+	 * @return list<array<string, mixed>>
 	 */
-	private function addRail(array &$rails, string $id, string $title, array $items): void {
-		if ($items === []) {
+	private function rank(array $folders, string $kind, array $watched): array {
+		$chosen = [];
+		foreach ($folders as $folder) {
+			if ($folder['kind'] !== $kind || $folder['count'] === 0) {
+				continue;
+			}
+			$lastTouched = 0;
+			foreach ($folder['unfinished'] as $at) {
+				$lastTouched = max($lastTouched, (int)$at);
+			}
+			$folder['lastTouched'] = $lastTouched;
+			$chosen[] = $folder;
+		}
+		usort($chosen, static function (array $a, array $b): int {
+			if (($a['lastTouched'] > 0) !== ($b['lastTouched'] > 0)) {
+				return $b['lastTouched'] <=> $a['lastTouched'];
+			}
+			return ($b['lastTouched'] ?: $b['latest']) <=> ($a['lastTouched'] ?: $a['latest']);
+		});
+		return $chosen;
+	}
+
+	/**
+	 * Turn a list of file ids into cards, keeping the order they were given in
+	 * and hanging on each one the folder it came from and how far it was watched.
+	 *
+	 * @param list<array<string, mixed>> $rails
+	 * @param list<int> $fileIds
+	 * @param array<string, array<string, mixed>> $folders
+	 * @param array<int, \OCA\VideoGallery\Db\Progress> $watched
+	 * @param array<int, string> $reasons
+	 */
+	private function addRail(array &$rails, string $id, string $title, string $userId, array $fileIds, array $folders, array $watched, array $reasons = []): void {
+		$cards = $this->cards($userId, $fileIds, $folders, $watched, $reasons);
+		if ($cards === []) {
 			return;
 		}
-		$rails[] = [
-			'id' => $id,
-			'title' => $title,
-			'items' => array_map(static fn (Item $item) => $item->jsonSerialize(), $items),
-		];
+		$rails[] = ['id' => $id, 'title' => $title, 'items' => $cards];
 	}
 
-	/** @return list<Item> */
-	private function continueWatching(string $userId): array {
-		$progress = $this->progress->unfinished($userId, $this->railSize());
-		if ($progress === []) {
+	/**
+	 * @param list<int> $fileIds
+	 * @param array<string, array<string, mixed>> $folders
+	 * @param array<int, \OCA\VideoGallery\Db\Progress> $watched
+	 * @param array<int, string> $reasons
+	 * @return list<array<string, mixed>>
+	 */
+	public function cards(string $userId, array $fileIds, array $folders, array $watched, array $reasons = []): array {
+		$fileIds = array_values(array_unique(array_filter($fileIds)));
+		if ($fileIds === []) {
 			return [];
 		}
-		$fileIds = array_map(static fn ($p) => $p->getFileId(), $progress);
-		$found = $this->items->search($userId, ['fileIds' => $fileIds], count($fileIds));
-		// Keep the order the progress list gave us: most recently watched first.
-		$byId = [];
-		foreach ($found as $item) {
-			$byId[$item->getFileId()] = $item;
+		$found = [];
+		foreach ($this->items->search($userId, ['fileIds' => $fileIds], count($fileIds)) as $item) {
+			$found[$item->getFileId()] = $item;
 		}
-		$ordered = [];
+		$cards = [];
 		foreach ($fileIds as $fileId) {
-			if (isset($byId[$fileId])) {
-				$ordered[] = $byId[$fileId];
+			$item = $found[$fileId] ?? null;
+			if ($item === null) {
+				continue;
 			}
+			$row = $item->jsonSerialize();
+			// Without this the red line under a card never appears, however far
+			// somebody got through the film.
+			$row['progress'] = isset($watched[$fileId]) ? $watched[$fileId]->jsonSerialize() : null;
+			$folderPath = trim(dirname($item->getPath()), '.');
+			$folder = $folders[$folderPath] ?? null;
+			$row['collection'] = [
+				'path' => $folderPath,
+				'name' => $folderPath === '' ? $this->l10n->t('Top level') : basename($folderPath),
+				'kind' => $folder['kind'] ?? Collections::OTHER,
+				'count' => $folder['count'] ?? 0,
+			];
+			$row['reason'] = $reasons[$fileId] ?? null;
+			$cards[] = $row;
 		}
-		return $ordered;
+		return $cards;
 	}
 
-	/**
-	 * What is in the account's own video folder, which is usually the answer to
-	 * "where did I put that".
-	 *
-	 * @return list<Item>
-	 */
-	private function inDefaultFolder(string $userId): array {
-		$name = $this->folder->name();
-		if ($name === '') {
+	/** @param list<int> $fileIds @return list<int> */
+	private function newestFirst(string $userId, array $fileIds): array {
+		if ($fileIds === []) {
 			return [];
 		}
-		return $this->items->search($userId, ['folder' => $name, 'sort' => 'taken_desc'], $this->railSize());
+		$found = $this->items->search($userId, ['fileIds' => $fileIds, 'sort' => 'taken_desc'], count($fileIds));
+		return array_map(static fn (Item $item) => $item->getFileId(), $found);
 	}
 
-	/** @return list<Item> */
-	private function recent(string $userId): array {
-		return $this->items->search($userId, ['sort' => 'added_desc'], $this->railSize());
-	}
-
-	private function onThisDayTitle(): string {
-		return $this->l10n->t('On this day');
-	}
-
-	/**
-	 * Videos shot on today's date in years gone by.
-	 *
-	 * @return list<Item>
-	 */
-	private function onThisDay(string $userId): array {
-		$out = [];
-		$month = (int)date('n');
-		$day = (int)date('j');
-		$thisYear = (int)date('Y');
-		for ($year = $thisYear - 1; $year >= $thisYear - 15 && count($out) < $this->railSize(); $year--) {
-			$from = mktime(0, 0, 0, $month, $day, $year);
-			if ($from === false) {
-				continue;
-			}
-			$found = $this->items->search($userId, [
-				'from' => $from,
-				'to' => $from + 86400,
-				'sort' => 'taken_desc',
-			], $this->railSize() - count($out));
-			foreach ($found as $item) {
-				$out[] = $item;
-			}
-		}
-		return $out;
-	}
-
-	/**
-	 * A row per year, for the years that actually hold something.
-	 *
-	 * @return list<array{id: string, title: string, items: list<Item>}>
-	 */
-	private function yearRails(string $userId): array {
-		$years = [];
-		foreach ($this->items->timeline($userId, 'year') as $bucket) {
-			$years[(int)$bucket['day']] = (int)$bucket['count'];
-		}
-		arsort($years);
-		$rails = [];
-		$taken = 0;
-		foreach ($years as $year => $count) {
-			if ($taken >= 4 || $count < 3 || $year < 1980) {
-				continue;
-			}
-			$from = mktime(0, 0, 0, 1, 1, $year);
-			$to = mktime(0, 0, 0, 1, 1, $year + 1);
-			if ($from === false || $to === false) {
-				continue;
-			}
-			$items = $this->items->search($userId, ['from' => $from, 'to' => $to, 'sort' => 'taken_desc'], $this->railSize());
-			if ($items === []) {
-				continue;
-			}
-			$rails[] = ['id' => 'year-' . $year, 'title' => (string)$year, 'items' => $items];
-			$taken++;
-		}
-		return $rails;
-	}
-
-	/** @return list<Item> */
-	private function byDuration(string $userId, int $minSeconds, int $maxSeconds): array {
-		$filter = ['sort' => 'taken_desc'];
-		if ($minSeconds > 0) {
-			$filter['minDuration'] = $minSeconds;
-		}
-		if ($maxSeconds > 0) {
-			$filter['maxDuration'] = $maxSeconds;
-		}
-		return $this->items->search($userId, $filter, $this->railSize());
-	}
-
-	/**
-	 * A row for each folder that holds a decent number of videos, which is
-	 * usually how people have already organised them.
-	 *
-	 * @return list<array{id: string, title: string, items: list<Item>}>
-	 */
-	private function folderRails(string $userId): array {
-		$rails = [];
-		$taken = 0;
-		foreach ($this->items->folders($userId) as $folder) {
-			if ($taken >= 5 || $folder['count'] < 4) {
-				continue;
-			}
-			$path = $folder['path'];
-			if ($path === '' || $this->folder->contains($path)) {
-				continue;
-			}
-			$items = $this->items->search($userId, ['folder' => $path, 'sort' => 'taken_desc'], $this->railSize());
-			if ($items === []) {
-				continue;
-			}
-			$rails[] = [
-				'id' => 'folder-' . md5($path),
-				'title' => basename($path),
-				'items' => $items,
-			];
-			$taken++;
-		}
-		return $rails;
-	}
-
-	/**
-	 * Something from more than a year ago, chosen at random, because a library
-	 * this size is mostly things you have forgotten you have.
-	 *
-	 * @return list<Item>
-	 */
+	/** @return list<int> */
 	private function rediscover(string $userId): array {
 		$cutoff = time() - (365 * 86400);
 		$total = $this->items->count($userId, ['to' => $cutoff]);
@@ -234,18 +252,26 @@ class Library {
 			return [];
 		}
 		$offset = random_int(0, max(0, $total - $this->railSize()));
-		return $this->items->search($userId, ['to' => $cutoff, 'sort' => 'taken_desc'], $this->railSize(), $offset);
+		return array_map(
+			static fn (Item $item) => $item->getFileId(),
+			$this->items->search($userId, ['to' => $cutoff, 'sort' => 'taken_desc'], $this->railSize(), $offset),
+		);
 	}
 
 	/**
-	 * The video shown across the top. Something long enough to deserve the
-	 * space, with a cover picture already made so the page does not open on an
-	 * empty rectangle.
-	 *
-	 * @param list<array<string, mixed>> $rails
+	 * @param array<string, array<string, mixed>> $folders
+	 * @param array<int, \OCA\VideoGallery\Db\Progress> $watched
 	 * @return array<string, mixed>|null
 	 */
-	private function hero(string $userId, array $rails): ?array {
+	private function hero(string $userId, array $folders, array $watched): ?array {
+		// Something half watched makes the best invitation there is.
+		$unfinished = $this->progress->unfinished($userId, 1);
+		if ($unfinished !== []) {
+			$cards = $this->cards($userId, [$unfinished[0]->getFileId()], $folders, $watched, [$unfinished[0]->getFileId() => 'resume']);
+			if ($cards !== []) {
+				return $cards[0];
+			}
+		}
 		$candidates = $this->items->search($userId, ['minDuration' => 60, 'sort' => 'taken_desc'], 60);
 		if ($candidates === []) {
 			$candidates = $this->items->search($userId, ['sort' => 'taken_desc'], 20);
@@ -257,30 +283,135 @@ class Library {
 		$pool = $withPoster !== [] ? $withPoster : $candidates;
 		// Steady for a day: the front page should not shuffle on every reload.
 		$seed = (int)date('Ymd') + crc32($userId);
-		return $pool[$seed % count($pool)]->jsonSerialize();
+		$chosen = $pool[$seed % count($pool)];
+		$cards = $this->cards($userId, [$chosen->getFileId()], $folders, $watched);
+		return $cards[0] ?? null;
 	}
 
+	// -- everything, by folder ----------------------------------------------
+
 	/**
-	 * The timeline view: days, each with its videos, newest first.
+	 * The whole library as folders, each opened at the part worth opening.
 	 *
 	 * @return array<string, mixed>
 	 */
-	public function timeline(string $userId, int $limit, int $offset, array $filter = []): array {
-		$items = $this->items->search($userId, $filter + ['sort' => 'taken_desc'], $limit, $offset);
-		$days = [];
-		foreach ($items as $item) {
-			$day = date('Y-m-d', $item->getTakenAt());
-			if (!isset($days[$day])) {
-				$days[$day] = ['day' => $day, 'label' => $this->dayLabel($item->getTakenAt()), 'items' => []];
+	public function everything(string $userId, int $limit = 20, int $offset = 0, string $query = ''): array {
+		$folders = $this->collections->build($userId);
+		$watched = $this->progress->allFor($userId);
+
+		$ordered = [];
+		foreach ($this->collections->categories() as $category) {
+			foreach ($this->rank($folders, $category['id'], $watched) as $folder) {
+				$ordered[] = $folder;
 			}
-			$days[$day]['items'][] = $item->jsonSerialize();
 		}
+		if ($query !== '') {
+			$needle = mb_strtolower($query);
+			$ordered = array_values(array_filter($ordered, static function (array $folder) use ($needle): bool {
+				if (str_contains(mb_strtolower((string)$folder['path']), $needle)) {
+					return true;
+				}
+				foreach ($folder['items'] as $row) {
+					if (str_contains(mb_strtolower((string)$row['name']), $needle)) {
+						return true;
+					}
+				}
+				return false;
+			}));
+		}
+
+		$total = count($ordered);
+		$page = array_slice($ordered, $offset, $limit);
+		$perSection = 8;
+
+		$sections = [];
+		foreach ($page as $folder) {
+			$ids = $this->showsLatest($folder['kind'])
+				? $this->collections->latest($folder, $perSection)
+				: $this->collections->fromEntry($folder, $perSection);
+			$reasons = [];
+			if (($folder['entry']['fileId'] ?? null) !== null) {
+				$reasons[$folder['entry']['fileId']] = $folder['entry']['reason'];
+			}
+			$cards = $this->cards($userId, $ids, $folders, $watched, $reasons);
+			if ($cards === []) {
+				continue;
+			}
+			$sections[] = [
+				'path' => $folder['path'],
+				'name' => $folder['path'] === '' ? $this->l10n->t('Top level') : basename($folder['path']),
+				'parent' => $folder['parent'],
+				'kind' => $folder['kind'],
+				'kindLabel' => $this->l10n->t((string)($this->collections->category((string)$folder['kind'])['label'] ?? '')),
+				'count' => $folder['count'],
+				'items' => $cards,
+			];
+		}
+
+		return ['sections' => $sections, 'total' => $total, 'offset' => $offset, 'limit' => $limit];
+	}
+
+	// -- the timeline -------------------------------------------------------
+
+	/**
+	 * By year, then by day, and within a day by the folder each came from.
+	 *
+	 * @param array<string, mixed> $filter
+	 * @return array<string, mixed>
+	 */
+	public function timeline(string $userId, int $limit, int $offset, array $filter = []): array {
+		$found = $this->items->search($userId, $filter + ['sort' => 'taken_desc'], $limit, $offset);
+		$folders = $this->collections->build($userId);
+		$watched = $this->progress->allFor($userId);
+		$cards = $this->cards($userId, array_map(static fn (Item $item) => $item->getFileId(), $found), $folders, $watched);
+
+		$years = [];
+		foreach ($cards as $card) {
+			$when = (int)$card['takenAt'];
+			$year = date('Y', $when);
+			$day = date('Y-m-d', $when);
+			$folderPath = (string)$card['collection']['path'];
+
+			$years[$year] ??= ['year' => $year, 'count' => 0, 'days' => []];
+			$years[$year]['count']++;
+			$years[$year]['days'][$day] ??= [
+				'day' => $day,
+				'label' => $this->dayLabel($when),
+				'groups' => [],
+			];
+			$years[$year]['days'][$day]['groups'][$folderPath] ??= [
+				'path' => $folderPath,
+				'name' => $card['collection']['name'],
+				'kind' => $card['collection']['kind'],
+				'count' => $card['collection']['count'],
+				'items' => [],
+			];
+			$years[$year]['days'][$day]['groups'][$folderPath]['items'][] = $card;
+		}
+
+		// Out of the maps they were built in, into lists the page can walk.
+		$out = [];
+		foreach ($years as $year) {
+			$days = [];
+			foreach ($year['days'] as $day) {
+				$day['groups'] = array_values($day['groups']);
+				$days[] = $day;
+			}
+			$year['days'] = $days;
+			$out[] = $year;
+		}
+
 		return [
-			'days' => array_values($days),
+			'years' => $out,
 			'total' => $this->items->count($userId, $filter),
 			'offset' => $offset,
 			'limit' => $limit,
 		];
+	}
+
+	/** Whether a kind of folder is shown newest first rather than in order. */
+	private function showsLatest(string $kind): bool {
+		return ($this->collections->category($kind)['show'] ?? 'entry') === 'latest';
 	}
 
 	private function dayLabel(int $timestamp): string {
@@ -292,9 +423,62 @@ class Library {
 		if ($timestamp >= $yesterday) {
 			return $this->l10n->t('Yesterday');
 		}
-		if ((int)date('Y', $timestamp) === (int)date('Y')) {
-			return $this->l10n->l('date', $timestamp, ['width' => 'long']);
-		}
 		return $this->l10n->l('date', $timestamp, ['width' => 'long']);
+	}
+
+	// -- one folder ---------------------------------------------------------
+
+	/**
+	 * Everything in one folder, in the order it should be watched.
+	 *
+	 * @return array<string, mixed>
+	 */
+	public function folderView(string $userId, string $path, int $limit = 500, int $offset = 0): array {
+		$folders = $this->collections->build($userId);
+		$watched = $this->progress->allFor($userId);
+		$folder = $folders[$path] ?? null;
+		if ($folder === null) {
+			return ['path' => $path, 'name' => basename($path), 'items' => [], 'total' => 0, 'children' => []];
+		}
+		$ids = array_map(static fn ($row) => $row['fileId'], $folder['items']);
+		if ($this->showsLatest((string)$folder['kind'])) {
+			$ids = $this->collections->latest($folder, count($ids));
+		}
+		$reasons = [];
+		if (($folder['entry']['fileId'] ?? null) !== null) {
+			$reasons[$folder['entry']['fileId']] = $folder['entry']['reason'];
+		}
+
+		// Folders sitting inside this one, so a course split into sections can
+		// be walked through rather than only searched.
+		$children = [];
+		$prefix = $path === '' ? '' : $path . '/';
+		foreach ($folders as $candidate) {
+			if ($candidate['path'] === $path || ($prefix !== '' && !str_starts_with((string)$candidate['path'], $prefix))) {
+				continue;
+			}
+			$relative = $prefix === '' ? (string)$candidate['path'] : substr((string)$candidate['path'], strlen($prefix));
+			if ($relative === '' || str_contains($relative, '/')) {
+				continue;
+			}
+			$children[] = [
+				'path' => $candidate['path'],
+				'name' => basename((string)$candidate['path']),
+				'kind' => $candidate['kind'],
+				'count' => $candidate['count'],
+			];
+		}
+		usort($children, static fn ($a, $b) => strnatcasecmp($a['name'], $b['name']));
+
+		return [
+			'path' => $path,
+			'name' => $path === '' ? $this->l10n->t('Top level') : basename($path),
+			'parent' => $folder['parent'],
+			'kind' => $folder['kind'],
+			'total' => count($ids),
+			'children' => $children,
+			'entry' => $folder['entry'],
+			'items' => $this->cards($userId, array_slice($ids, $offset, $limit), $folders, $watched, $reasons),
+		];
 	}
 }

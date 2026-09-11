@@ -5,6 +5,9 @@ import axios from '@nextcloud/axios'
 import { generateOcsUrl, generateUrl } from '@nextcloud/router'
 import type {
 	ExternalLinks,
+	FolderSection,
+	FolderView,
+	TimelineYear,
 	OpenResult,
 	Rail,
 	SpriteLayout,
@@ -30,10 +33,25 @@ export async function fetchItems(params: Record<string, unknown> = {}): Promise<
 }
 
 export async function fetchTimeline(params: Record<string, unknown> = {}): Promise<{
-	days: Array<{ day: string, label: string, items: VideoItem[] }>
+	years: TimelineYear[]
 	total: number
 }> {
 	const { data } = await axios.get(ocs('timeline'), { params })
+	return data.ocs.data
+}
+
+/** The library as folders, each opened at the part worth opening. */
+export async function fetchEverything(params: Record<string, unknown> = {}): Promise<{
+	sections: FolderSection[]
+	total: number
+}> {
+	const { data } = await axios.get(ocs('everything'), { params })
+	return data.ocs.data
+}
+
+/** One folder, in the order it should be watched. */
+export async function fetchFolder(path: string): Promise<FolderView> {
+	const { data } = await axios.get(ocs('folder'), { params: { path } })
 	return data.ocs.data
 }
 

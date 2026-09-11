@@ -34,6 +34,7 @@ class ApiController extends OCSController {
 		private ItemMapper $items,
 		private ProgressMapper $progress,
 		private Library $library,
+		private \OCA\VideoGallery\Service\Collections $collections,
 		private GalleryFolder $galleryFolder,
 		private Indexer $indexer,
 		private \OCA\VideoGallery\Service\FileResolver $resolver,
@@ -68,6 +69,18 @@ class ApiController extends OCSController {
 		// Made on the first visit, so there is somewhere obvious to put things.
 		$this->galleryFolder->ensure($userId);
 		return new DataResponse($this->library->home($userId) + ['defaultFolder' => $this->galleryFolder->name()]);
+	}
+
+	/** Everything, arranged by the folders it lives in. */
+	#[NoAdminRequired]
+	public function everything(int $limit = 20, int $offset = 0, string $query = ''): DataResponse {
+		return new DataResponse($this->library->everything($this->userId(), min(60, max(1, $limit)), max(0, $offset), trim($query)));
+	}
+
+	/** One folder, in the order it should be watched. */
+	#[NoAdminRequired]
+	public function folder(string $path = '', int $limit = 500, int $offset = 0): DataResponse {
+		return new DataResponse($this->library->folderView($this->userId(), trim($path, '/'), min(1000, max(1, $limit)), max(0, $offset)));
 	}
 
 	/** The library as a timeline, a page at a time. */
@@ -170,6 +183,9 @@ class ApiController extends OCSController {
 		$entity->setSubIndex($subIndex);
 		$entity->setUpdatedAt(time());
 		$saved = $entity->getId() === null ? $this->progress->insert($entity) : $this->progress->update($entity);
+		// The front page is arranged around what has been watched, so it is no
+		// longer what it was a moment ago.
+		$this->library->forget($userId);
 		return new DataResponse($saved->jsonSerialize());
 	}
 
@@ -240,6 +256,8 @@ class ApiController extends OCSController {
 		}
 
 		$this->items->update($item);
+		$this->library->forget($userId);
+		$this->collections->forget($userId);
 		return new DataResponse(['item' => $item->jsonSerialize()]);
 	}
 
@@ -280,6 +298,8 @@ class ApiController extends OCSController {
 		$userId = $this->userId();
 		$sync = $this->indexer->sync($userId);
 		$queue = $this->indexer->processQueue(min(50, $this->config->getInt('index_batch')), $userId);
+		$this->library->forget($userId);
+		$this->collections->forget($userId);
 		return new DataResponse(['sync' => $sync, 'queue' => $queue, 'stats' => $this->items->stats($userId)]);
 	}
 }

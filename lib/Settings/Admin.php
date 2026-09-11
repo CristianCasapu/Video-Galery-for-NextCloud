@@ -31,6 +31,7 @@ class Admin implements ISettings {
 		private ItemMapper $items,
 		private PlaybackMemory $memory,
 		private Tuning $tuning,
+		private \OCA\VideoGallery\Service\Collections $collections,
 	) {
 	}
 
@@ -44,6 +45,7 @@ class Admin implements ISettings {
 			'candidates' => $this->paths->candidates(),
 			'encoders' => FFmpeg::ENCODERS,
 			'memory' => $this->memory->summary(30),
+			'categories' => $this->collections->categories(),
 			'devices' => $this->tuning->devices(),
 			'benchmark' => $this->tuning->benchmark(),
 		]);

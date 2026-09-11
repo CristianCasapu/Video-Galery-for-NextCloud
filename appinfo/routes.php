@@ -54,6 +54,8 @@ return [
 	'ocs' => [
 		['name' => 'api#config', 'url' => '/api/v1/config', 'verb' => 'GET'],
 		['name' => 'api#timeline', 'url' => '/api/v1/timeline', 'verb' => 'GET'],
+		['name' => 'api#everything', 'url' => '/api/v1/everything', 'verb' => 'GET'],
+		['name' => 'api#folder', 'url' => '/api/v1/folder', 'verb' => 'GET'],
 		['name' => 'api#items', 'url' => '/api/v1/items', 'verb' => 'GET'],
 		['name' => 'api#rails', 'url' => '/api/v1/rails', 'verb' => 'GET'],
 		['name' => 'api#item', 'url' => '/api/v1/items/{fileId}', 'verb' => 'GET'],

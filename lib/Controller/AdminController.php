@@ -32,6 +32,7 @@ class AdminController extends OCSController {
 		private Janitor $janitor,
 		private PlaybackMemory $memory,
 		private Tuning $tuning,
+		private \OCA\VideoGallery\Service\Collections $collections,
 		private Indexer $indexer,
 		private ItemMapper $items,
 		private SessionMapper $sessions,
@@ -89,6 +90,9 @@ class AdminController extends OCSController {
 	public function setSettings(array $settings = []): DataResponse {
 		$before = $this->config->getString('cache_root');
 		$applied = $this->config->setMany($settings);
+		// How folders are sorted into kinds is a setting now, so the arrangement
+		// worked out from the old rules is no longer the right one.
+		$this->collections->forgetAll();
 		// A change of encoder or paths invalidates what we believe about the
 		// hardware, so it is worked out again rather than trusted.
 		if (($settings['encoder'] ?? null) !== null

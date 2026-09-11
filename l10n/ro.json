@@ -312,7 +312,43 @@
         "Cancel": "Anulează",
         "from the file itself": "din fișierul însuși",
         "from the file name": "din numele fișierului",
-        "when the file arrived": "când a ajuns fișierul"
+        "when the file arrived": "când a ajuns fișierul",
+        "Top level": "Nivelul de sus",
+        "Kinds of folder": "Tipuri de director",
+        "Add a kind": "Adaugă un tip",
+        "A library is kept in folders, and the folders mean different things: a course is watched in order from where you left off, a folder of phone clips is looked at newest first. These rules decide which is which. The first kind that matches a folder wins, so the order here is the order they are tried in.": "O bibliotecă se ține în directoare, iar directoarele înseamnă lucruri diferite: un curs se urmărește în ordine, de unde ai rămas, iar un folder cu clipuri de telefon se privește începând cu cele mai noi. Regulile de aici decid care e care. Primul tip care se potrivește câștigă, deci ordinea de aici e ordinea în care sunt încercate.",
+        "Name for this kind": "Numele acestui tip",
+        "Try this one earlier": "Încearcă-l mai devreme",
+        "Try this one later": "Încearcă-l mai târziu",
+        "Remove": "Șterge",
+        "Words in the folder path that mean this kind": "Cuvinte din calea directorului care înseamnă acest tip",
+        "Or a pattern the file names match": "Sau un tipar pe care numele fișierelor îl respectă",
+        "Show it as": "Afișează-l ca",
+        "The part worth watching next": "Partea care merită văzută în continuare",
+        "The newest first": "Cele mai noi întâi",
+        "One part follows another, so the next starts by itself": "O parte urmează alteia, deci următoarea pornește singură",
+        "A folder of plainly numbered files, when nothing else matches, is": "Un folder cu fișiere clar numerotate, când nimic altceva nu se potrivește, este",
+        "Nothing in particular": "Nimic anume",
+        "What to call everything else": "Cum se numește restul",
+        "All folders": "Toate directoarele",
+        "That folder could not be opened.": "Directorul nu a putut fi deschis.",
+        "%n folder": [
+            "%n director",
+            "%n directoare",
+            "%n de directoare"
+        ],
+        "%n folders": [
+            "%n director",
+            "%n directoare",
+            "%n de directoare"
+        ],
+        "Open {folder}": "Deschide {folder}",
+        "Watched": "Vizionat",
+        "Courses": "Cursuri",
+        "Series": "Seriale",
+        "Camera": "Cameră",
+        "Films": "Filme",
+        "Folders": "Directoare"
     },
     "pluralForm": "nplurals=3; plural=(n==1?0:(n==0||(n%100>0&&n%100<20))?1:2);"
 }

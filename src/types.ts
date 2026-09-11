@@ -39,6 +39,47 @@ export interface VideoItem {
 	hasLoop: boolean
 	hasSprite: boolean
 	progress?: WatchProgress | null
+	collection?: Collection | null
+	reason?: 'resume' | 'next' | 'first' | 'again' | null
+}
+
+/** The folder a video lives in, and what kind of folder it is. */
+export interface Collection {
+	path: string
+	name: string
+	kind: 'course' | 'camera' | 'other'
+	count: number
+}
+
+export interface FolderSection {
+	path: string
+	name: string
+	parent: string
+	kind: string
+	kindLabel?: string
+	count: number
+	items: VideoItem[]
+}
+
+export interface TimelineYear {
+	year: string
+	count: number
+	days: Array<{
+		day: string
+		label: string
+		groups: FolderSection[]
+	}>
+}
+
+export interface FolderView {
+	path: string
+	name: string
+	parent: string
+	kind: string
+	total: number
+	children: Array<{ path: string, name: string, kind: string, count: number }>
+	entry: { fileId: number, reason: string } | null
+	items: VideoItem[]
 }
 
 export interface AudioTrack {

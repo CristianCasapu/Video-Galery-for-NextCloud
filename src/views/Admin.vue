@@ -270,6 +270,66 @@
 			</div>
 		</section>
 
+		<!-- What kind of thing is in each folder. -->
+		<section class="vg-card">
+			<header class="vg-card__head">
+				<h3>{{ t('videogallery', 'Kinds of folder') }}</h3>
+				<button class="vg-btn" @click="addCategory">{{ t('videogallery', 'Add a kind') }}</button>
+			</header>
+			<p class="vg-hint">
+				{{ t('videogallery', 'A library is kept in folders, and the folders mean different things: a course is watched in order from where you left off, a folder of phone clips is looked at newest first. These rules decide which is which. The first kind that matches a folder wins, so the order here is the order they are tried in.') }}
+			</p>
+
+			<div v-for="(category, index) in categories" :key="index" class="vg-kind">
+				<div class="vg-kind__head">
+					<input v-model="category.label" class="vg-kind__label" type="text" :placeholder="t('videogallery', 'Name for this kind')">
+					<div class="vg-kind__buttons">
+						<button class="vg-btn vg-btn--tiny" :disabled="index === 0" :aria-label="t('videogallery', 'Try this one earlier')" @click="moveCategory(index, -1)">↑</button>
+						<button class="vg-btn vg-btn--tiny" :disabled="index === categories.length - 1" :aria-label="t('videogallery', 'Try this one later')" @click="moveCategory(index, 1)">↓</button>
+						<button class="vg-btn vg-btn--tiny vg-btn--warn" :aria-label="t('videogallery', 'Remove')" @click="removeCategory(index)">×</button>
+					</div>
+				</div>
+
+				<label class="vg-field">
+					<span>{{ t('videogallery', 'Words in the folder path that mean this kind') }}</span>
+					<textarea :value="category.words.join(', ')" rows="2" spellcheck="false" @input="setWords(category, ($event.target as HTMLTextAreaElement).value)" />
+				</label>
+
+				<div class="vg-grid">
+					<label class="vg-field">
+						<span>{{ t('videogallery', 'Or a pattern the file names match') }}</span>
+						<input v-model="category.namePattern" type="text" spellcheck="false" placeholder="^(?:img|vid)[-_ ]?\d">
+					</label>
+					<label class="vg-field">
+						<span>{{ t('videogallery', 'Show it as') }}</span>
+						<select v-model="category.show">
+							<option value="entry">{{ t('videogallery', 'The part worth watching next') }}</option>
+							<option value="latest">{{ t('videogallery', 'The newest first') }}</option>
+						</select>
+					</label>
+				</div>
+
+				<label class="vg-toggle">
+					<input v-model="category.sequence" type="checkbox">
+					<span>{{ t('videogallery', 'One part follows another, so the next starts by itself') }}</span>
+				</label>
+			</div>
+
+			<div class="vg-grid">
+				<label class="vg-field">
+					<span>{{ t('videogallery', 'A folder of plainly numbered files, when nothing else matches, is') }}</span>
+					<select v-model="settings.sequence_category">
+						<option value="">{{ t('videogallery', 'Nothing in particular') }}</option>
+						<option v-for="category in categories" :key="category.id" :value="category.id">{{ category.label }}</option>
+					</select>
+				</label>
+				<label class="vg-field">
+					<span>{{ t('videogallery', 'What to call everything else') }}</span>
+					<input v-model="settings.other_label" type="text">
+				</label>
+			</div>
+		</section>
+
 		<!-- Watching in order. -->
 		<section class="vg-card">
 			<h3>{{ t('videogallery', 'Watching in order') }}</h3>
@@ -473,6 +533,14 @@ interface AdminState {
 	cache: Record<string, any>
 	library: Record<string, number>
 	candidates: string[]
+	categories: Array<{
+		id: string
+		label: string
+		words: string[]
+		namePattern: string
+		show: string
+		sequence: boolean
+	}>
 	devices: Array<{
 		kind: string
 		index: number
@@ -512,6 +580,40 @@ const library = ref(state.library)
 const candidates = ref(state.candidates ?? [])
 const memory = ref(state.memory ?? [])
 const devices = ref(state.devices ?? [])
+
+// The catch-all is not one of the rules; it is what is left when none match.
+const categories = ref((state.categories ?? []).filter((entry) => entry.id !== 'other'))
+
+function setWords(category: { words: string[] }, value: string): void {
+	category.words = value.split(/[,\n]/).map((word) => word.trim()).filter(Boolean)
+}
+
+function addCategory(): void {
+	categories.value.push({
+		id: 'kind-' + Date.now().toString(36),
+		label: '',
+		words: [],
+		namePattern: '',
+		show: 'entry',
+		sequence: false,
+	})
+}
+
+function removeCategory(index: number): void {
+	categories.value.splice(index, 1)
+}
+
+/** Order is priority here: the first kind that matches a folder wins. */
+function moveCategory(index: number, by: number): void {
+	const target = index + by
+	if (target < 0 || target >= categories.value.length) {
+		return
+	}
+	const moved = categories.value.splice(index, 1)[0]
+	if (moved) {
+		categories.value.splice(target, 0, moved)
+	}
+}
 const benchmark = ref(state.benchmark ?? {})
 const tuning = ref(false)
 
@@ -666,6 +768,7 @@ function flash(text: string): void {
 async function save(): Promise<void> {
 	busy.value = true
 	try {
+		settings.value.categories = categories.value.filter((entry) => entry.label.trim() !== '')
 		const { data } = await axios.put(url('settings'), { settings: settings.value })
 		settings.value = data.ocs.data.settings
 		environment.value = data.ocs.data.environment
@@ -996,6 +1099,39 @@ async function reindex(reprobe: boolean): Promise<void> {
 	cursor: pointer;
 	font-size: 13px;
 	color: var(--color-text-maxcontrast);
+}
+
+.vg-kind {
+	margin-bottom: 14px;
+	padding: 12px 14px;
+	border: 1px solid var(--color-border);
+	border-radius: var(--border-radius-element, 8px);
+	background: var(--color-background-hover);
+}
+
+.vg-kind__head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 8px;
+}
+
+.vg-kind__label {
+	flex: 1;
+	min-width: 0;
+	font-weight: 600;
+	min-height: 34px;
+}
+
+.vg-kind__buttons {
+	display: flex;
+	gap: 4px;
+}
+
+.vg-btn--tiny {
+	min-width: 32px;
+	padding: 4px 8px;
+	line-height: 1.2;
 }
 
 .vg-tiny {

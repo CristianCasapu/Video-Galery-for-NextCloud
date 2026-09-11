@@ -69,6 +69,25 @@ class ProgressMapper extends QBMapper {
 		return $out;
 	}
 
+	/**
+	 * Everything this account has watched, keyed by file.
+	 *
+	 * Small — a few hundred rows for somebody who watches a lot — and needed
+	 * whole when working out where each collection should be resumed from.
+	 *
+	 * @return array<int, Progress>
+	 */
+	public function allFor(string $userId): array {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('*')->from($this->getTableName())
+			->where($qb->expr()->eq('user_id', $qb->createNamedParameter($userId)));
+		$out = [];
+		foreach ($this->findEntities($qb) as $entity) {
+			$out[$entity->getFileId()] = $entity;
+		}
+		return $out;
+	}
+
 	public function deleteByFileId(int $fileId, ?string $userId = null): int {
 		$qb = $this->db->getQueryBuilder();
 		$qb->delete($this->getTableName())

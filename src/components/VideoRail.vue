@@ -25,7 +25,8 @@
 					:item="item"
 					:previews-enabled="previewsEnabled"
 					@play="$emit('play', $event)"
-					@share="$emit('share', $event)" />
+					@share="$emit('share', $event)"
+					@folder="$emit('folder', $event)" />
 			</div>
 
 			<button v-show="canScrollRight"
@@ -52,7 +53,7 @@ const props = withDefaults(defineProps<{
 	previewsEnabled?: boolean
 }>(), { previewsEnabled: true })
 
-defineEmits<{ play: [item: VideoItem], share: [item: VideoItem] }>()
+defineEmits<{ play: [item: VideoItem], share: [item: VideoItem], folder: [path: string] }>()
 
 const track = ref<HTMLElement | null>(null)
 const canScrollLeft = ref(false)

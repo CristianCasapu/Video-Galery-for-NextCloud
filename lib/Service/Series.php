@@ -29,8 +29,24 @@ class Series {
 	public function __construct(
 		private ItemMapper $items,
 		private Config $config,
+		private Collections $collections,
 		private ShareAccess $access,
 	) {
+	}
+
+	/**
+	 * Whether one part of this follows another.
+	 *
+	 * Asked of the kind of folder it is in, which the administrator defines,
+	 * rather than guessed afresh: a folder called "Season 2" is a sequence
+	 * whatever its files are named, and a folder of holiday clips is not one
+	 * however neatly they are numbered.
+	 */
+	private function isSequence(string $userId, Item $item): bool {
+		$folders = $this->collections->build($userId);
+		$path = trim(dirname($item->getPath()), '.');
+		$kind = (string)($folders[$path]['kind'] ?? Collections::OTHER);
+		return (bool)($this->collections->category($kind)['sequence'] ?? false);
 	}
 
 	/**
@@ -86,7 +102,8 @@ class Series {
 		if ($position === null || !isset($siblings[$position + 1])) {
 			return null;
 		}
-		return $this->describe($siblings[$position + 1], $siblings, $position + 1);
+		$isSequence = $this->isSequence($userId, $item) && count($siblings) >= $this->config->getInt('series_minimum');
+		return $this->describe($siblings[$position + 1], $siblings, $position + 1, $isSequence);
 	}
 
 	/** The same, for somebody watching through a share link. */
@@ -115,7 +132,7 @@ class Series {
 	public function context(string $userId, Item $item): array {
 		$siblings = $this->siblings($userId, $item);
 		$position = $this->positionOf($siblings, $item);
-		$isSeries = $this->looksLikeSeries($siblings);
+		$isSeries = $this->isSequence($userId, $item) && count($siblings) >= $this->config->getInt('series_minimum');
 		return [
 			'isSeries' => $isSeries,
 			'title' => basename(trim(dirname($item->getPath()), '.')) ?: '',
@@ -124,10 +141,10 @@ class Series {
 			'autoplay' => $isSeries && $this->config->getBool('autoplay_next'),
 			'delay' => $this->config->getInt('autoplay_delay'),
 			'previous' => ($position !== null && isset($siblings[$position - 1]))
-				? $this->describe($siblings[$position - 1], $siblings, $position - 1)
+				? $this->describe($siblings[$position - 1], $siblings, $position - 1, $isSeries)
 				: null,
 			'next' => ($position !== null && isset($siblings[$position + 1]))
-				? $this->describe($siblings[$position + 1], $siblings, $position + 1)
+				? $this->describe($siblings[$position + 1], $siblings, $position + 1, $isSeries)
 				: null,
 		];
 	}
@@ -146,12 +163,12 @@ class Series {
 	 * @param list<Item> $siblings
 	 * @return array<string, mixed>
 	 */
-	private function describe(Item $item, array $siblings, int $index): array {
+	private function describe(Item $item, array $siblings, int $index, bool $isSequence): array {
 		return [
 			'item' => $item->jsonSerialize(),
 			'position' => $index + 1,
 			'total' => count($siblings),
-			'autoplay' => $this->looksLikeSeries($siblings) && $this->config->getBool('autoplay_next'),
+			'autoplay' => $isSequence && $this->config->getBool('autoplay_next'),
 			'delay' => $this->config->getInt('autoplay_delay'),
 		];
 	}

@@ -207,6 +207,43 @@ class ItemMapper extends QBMapper {
 	}
 
 	/**
+	 * Just enough about every video in an account to arrange them: which folder
+	 * each is in, what it is called, and when it happened.
+	 *
+	 * One query rather than one per folder. Grouping a library into collections,
+	 * deciding which are courses, and working out where to resume each of them
+	 * all need the same handful of columns, and a library of six thousand videos
+	 * is a few hundred kilobytes of them. Asking the database once and thinking
+	 * in memory is far quicker than two hundred round trips.
+	 *
+	 * @return list<array{fileId: int, name: string, path: string, folder: string, takenAt: int, mtime: int, duration: int}>
+	 */
+	public function skeleton(string $userId): array {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('file_id', 'name', 'path', 'taken_at', 'mtime', 'duration_ms')
+			->from($this->getTableName())
+			->where($qb->expr()->eq('user_id', $qb->createNamedParameter($userId)))
+			->andWhere($qb->expr()->eq('status', $qb->createNamedParameter('ok')));
+		$result = $qb->executeQuery();
+		$rows = [];
+		while ($row = $result->fetch()) {
+			$path = (string)$row['path'];
+			$slash = strrpos($path, '/');
+			$rows[] = [
+				'fileId' => (int)$row['file_id'],
+				'name' => (string)$row['name'],
+				'path' => $path,
+				'folder' => $slash === false ? '' : substr($path, 0, $slash),
+				'takenAt' => (int)$row['taken_at'],
+				'mtime' => (int)$row['mtime'],
+				'duration' => (int)round(((int)$row['duration_ms']) / 1000),
+			];
+		}
+		$result->closeCursor();
+		return $rows;
+	}
+
+	/**
 	 * The folders directly inside one folder, with how many videos each holds
 	 * altogether, counting everything below it.
 	 *
