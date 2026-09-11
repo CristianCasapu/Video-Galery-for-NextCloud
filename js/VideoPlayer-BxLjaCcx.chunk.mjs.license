@@ -5,7 +5,7 @@ SPDX-FileCopyrightText: videogallery developers
 
 This file is generated from multiple sources. Included packages:
 - videogallery
-	- version: 1.3.1
+	- version: 1.3.2
 	- license: AGPL-3.0-or-later
 - vite
 	- version: 7.3.6

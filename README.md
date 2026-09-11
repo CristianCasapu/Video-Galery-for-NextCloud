@@ -223,6 +223,9 @@ Nothing is stored to make those work, so nothing is left behind when they expire
 npm ci && npm run build
 ```
 
+Node 24 and PHP 8.4. This project follows the current release of everything it
+depends on; nothing here is held back for older versions.
+
 ## Licence
 
 AGPL-3.0-or-later

@@ -5,6 +5,23 @@ All notable changes to Video Gallery are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.2] — 2026-09-11
+
+Everything moved to the newest version it can actually be built with.
+
+- **Nextcloud 34** is now the minimum; the app no longer claims to run on 32 or 33
+- Built and checked on **Node 24**
+- `@vue/tsconfig` and TypeScript moved to their current releases
+- **Vite stays at 7 and TypeScript at 5.9**, and it is worth saying why: the only
+  `@nextcloud/vite-config` that understands Vite 8 is a beta, and `vue-tsc` still
+  reaches for a part of TypeScript that version 7 removed. Both were tried. With
+  Vite 8 the build *finished successfully* and wrote a sixty-byte bundle — an app
+  that installs perfectly and does nothing — which is a worse failure than an
+  error, and the reason for the next line
+- The build now **fails if it produces nothing**. A build tool that no longer
+  understands its configuration does not always say so, and size is the only
+  thing that catches it
+
 ## [1.3.1] — 2026-09-11
 
 - **PHP 8.4 is now the minimum.** The app already used syntax that nothing older

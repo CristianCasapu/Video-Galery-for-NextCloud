@@ -28,7 +28,7 @@ one was taken, and plays all of them in the browser — including the formats a 
 * Temporary files live wherever the administrator points them — a fast disk away from the system drive — and
   every one of them is accounted for and removed
     ]]></description>
-    <version>1.3.1</version>
+    <version>1.3.2</version>
     <licence>agpl</licence>
     <author mail="casapucristian@gmail.com">Cristian Casapu</author>
     <namespace>VideoGallery</namespace>
@@ -39,7 +39,7 @@ one was taken, and plays all of them in the browser — including the formats a 
     <repository type="git">https://github.com/CristianCasapu/videogallery.git</repository>
     <dependencies>
         <php min-version="8.4"/>
-        <nextcloud min-version="32" max-version="34"/>
+        <nextcloud min-version="34" max-version="34"/>
     </dependencies>
     <background-jobs>
         <job>OCA\VideoGallery\BackgroundJob\IndexJob</job>
